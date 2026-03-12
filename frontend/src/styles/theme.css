@@ -1,0 +1,231 @@
+/* Sakai-inspired theme for Element Plus */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Primary - Emerald */
+  --el-color-primary: #10b981;
+  --el-color-primary-light-3: #34d399;
+  --el-color-primary-light-5: #6ee7b7;
+  --el-color-primary-light-7: #a7f3d0;
+  --el-color-primary-light-8: #d1fae5;
+  --el-color-primary-light-9: #ecfdf5;
+  --el-color-primary-dark-2: #059669;
+
+  /* Success */
+  --el-color-success: #22c55e;
+  --el-color-success-light-3: #4ade80;
+  --el-color-success-light-5: #86efac;
+  --el-color-success-light-7: #bbf7d0;
+  --el-color-success-light-8: #dcfce7;
+  --el-color-success-light-9: #f0fdf4;
+  --el-color-success-dark-2: #16a34a;
+
+  /* Warning */
+  --el-color-warning: #f59e0b;
+  --el-color-warning-light-3: #fbbf24;
+  --el-color-warning-light-5: #fcd34d;
+  --el-color-warning-light-7: #fde68a;
+  --el-color-warning-light-8: #fef3c7;
+  --el-color-warning-light-9: #fffbeb;
+  --el-color-warning-dark-2: #d97706;
+
+  /* Danger */
+  --el-color-danger: #ef4444;
+  --el-color-danger-light-3: #f87171;
+  --el-color-danger-light-5: #fca5a5;
+  --el-color-danger-light-7: #fecaca;
+  --el-color-danger-light-8: #fee2e2;
+  --el-color-danger-light-9: #fef2f2;
+  --el-color-danger-dark-2: #dc2626;
+
+  /* Info */
+  --el-color-info: #3b82f6;
+  --el-color-info-light-3: #60a5fa;
+  --el-color-info-light-5: #93c5fd;
+  --el-color-info-light-7: #bfdbfe;
+  --el-color-info-light-8: #dbeafe;
+  --el-color-info-light-9: #eff6ff;
+  --el-color-info-dark-2: #2563eb;
+
+  /* Text */
+  --el-text-color-primary: #334155;
+  --el-text-color-regular: #475569;
+  --el-text-color-secondary: #64748b;
+  --el-text-color-placeholder: #94a3b8;
+  --el-text-color-disabled: #cbd5e1;
+
+  /* Border */
+  --el-border-color: #e2e8f0;
+  --el-border-color-light: #f1f5f9;
+  --el-border-color-lighter: #f1f5f9;
+  --el-border-color-extra-light: #f8fafc;
+  --el-border-color-dark: #cbd5e1;
+  --el-border-color-darker: #94a3b8;
+
+  /* Fill */
+  --el-fill-color: #f1f5f9;
+  --el-fill-color-light: #f8fafc;
+  --el-fill-color-lighter: #f8fafc;
+  --el-fill-color-extra-light: #f8fafc;
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-dark: #e2e8f0;
+
+  /* Background */
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f8fafc;
+  --el-bg-color-overlay: #ffffff;
+
+  /* Border Radius */
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 20px;
+
+  /* Shadow */
+  --el-box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --el-box-shadow-light: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --el-box-shadow-lighter: 0 0 0 1px rgb(0 0 0 / 0.05);
+  --el-box-shadow-dark: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+
+  /* Font */
+  --el-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-font-size-extra-small: 12px;
+  --el-font-size-large: 16px;
+  --el-font-size-medium: 14px;
+}
+
+body {
+  margin: 0;
+  font-family: var(--el-font-family);
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Card refinements */
+.el-card {
+  border: 1px solid var(--el-border-color) !important;
+  box-shadow: none !important;
+  border-radius: 12px !important;
+}
+.el-card:hover {
+  border-color: var(--el-border-color-dark) !important;
+}
+.el-card__header {
+  border-bottom: 1px solid var(--el-border-color-light) !important;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+/* Table refinements */
+.el-table {
+  border-radius: 12px !important;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color) !important;
+}
+.el-table th.el-table__cell {
+  background: #f8fafc !important;
+  color: var(--el-text-color-primary) !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+}
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #fafbfc !important;
+}
+.el-table td.el-table__cell {
+  color: var(--el-text-color-regular) !important;
+}
+
+/* Button refinements */
+.el-button {
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  transition: all 0.2s ease !important;
+}
+.el-button--primary {
+  --el-button-bg-color: #10b981;
+  --el-button-border-color: #10b981;
+  --el-button-hover-bg-color: #059669;
+  --el-button-hover-border-color: #059669;
+  --el-button-active-bg-color: #047857;
+  --el-button-active-border-color: #047857;
+}
+
+/* Tag refinements */
+.el-tag {
+  border-radius: 6px !important;
+  border: none !important;
+  font-weight: 500 !important;
+}
+
+/* Input refinements */
+.el-input__wrapper {
+  border-radius: 8px !important;
+  box-shadow: 0 0 0 1px var(--el-border-color) inset !important;
+  transition: all 0.2s ease !important;
+}
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--el-border-color-dark) inset !important;
+}
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset, 0 0 0 3px rgba(16, 185, 129, 0.1) !important;
+}
+
+/* Select */
+.el-select__wrapper {
+  border-radius: 8px !important;
+}
+
+/* Dialog */
+.el-dialog {
+  border-radius: 16px !important;
+}
+
+/* Drawer */
+.el-drawer {
+  border-radius: 16px 0 0 16px !important;
+}
+
+/* Pagination */
+.el-pagination {
+  --el-pagination-button-bg-color: transparent;
+}
+.el-pagination button, .el-pager li {
+  border-radius: 8px !important;
+}
+
+/* Progress bar */
+.el-progress-bar__outer {
+  border-radius: 4px !important;
+}
+.el-progress-bar__inner {
+  border-radius: 4px !important;
+}
+
+/* Descriptions */
+.el-descriptions {
+  border-radius: 8px !important;
+  overflow: hidden;
+}
+
+/* Message */
+.el-message {
+  border-radius: 10px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
