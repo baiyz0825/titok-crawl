@@ -111,6 +111,7 @@
               :loading="userSearchLoading"
               placeholder="搜索或选择用户"
               style="flex: 1"
+              @visible-change="onSelectVisibleChange"
             >
               <el-option
                 v-for="u in userOptions"
@@ -146,8 +147,9 @@
 
         <el-form-item v-if="['user_works', 'user_all'].includes(form.task_type)" label="采集选项">
           <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
-            <el-checkbox value="download_media" label="下载媒体文件（封面图/视频/图文图片）" />
+            <el-checkbox value="refresh_info" label="更新作品信息（简介、点赞、播放、收藏等）" />
             <el-checkbox value="scrape_comments" label="采集评论数据" />
+            <el-checkbox value="download_media" label="下载媒体文件（封面图/视频/图文图片）" />
           </el-checkbox-group>
         </el-form-item>
 
@@ -271,6 +273,13 @@ async function searchUsers(query: string = '') {
   userSearchLoading.value = false
 }
 
+async function onSelectVisibleChange(visible: boolean) {
+  // 当下拉框展开时，如果列表为空，自动加载用户列表
+  if (visible && userOptions.value.length === 0) {
+    await searchUsers('')
+  }
+}
+
 async function createTask() {
   if (!form.value.target) {
     ElMessage.warning('请选择目标用户')
@@ -287,11 +296,14 @@ async function createTask() {
     if (form.value.max_count) params.max_count = form.value.max_count
 
     // 处理采集选项
-    if (form.value.sync_types.includes('download_media')) {
-      params.download_media = true
+    if (form.value.sync_types.includes('refresh_info')) {
+      params.refresh_info = true
     }
     if (form.value.sync_types.includes('scrape_comments')) {
       params.scrape_comments = true
+    }
+    if (form.value.sync_types.includes('download_media')) {
+      params.download_media = true
     }
     if (form.value.sync_types.includes('collect_profile')) {
       params.collect_profile = true

@@ -63,7 +63,8 @@ class TaskWorker:
     async def _scrape_works(self, task_id: int, sec_user_id: str, params: dict) -> dict:
         max_count = params.get("max_count")
         scrape_comments = params.get("scrape_comments", False)
-        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}")
+        refresh_info = params.get("refresh_info", False)
+        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}, refresh_info={refresh_info}")
         progress_manager.update(task_id, 0.05, "开始采集作品", f"用户 {sec_user_id}")
 
         # Wrap scrape_works to track page progress
@@ -86,11 +87,26 @@ class TaskWorker:
 
         progress_manager.update(task_id, 0.95, "保存数据", f"共 {len(works)} 个作品")
 
+        # Refresh work info if requested (re-visit each work page for updated stats)
+        refreshed_count = 0
+        if refresh_info and works:
+            logger.info(f"[Task {task_id}] Starting work info refresh for {len(works)} works")
+            progress_manager.update(task_id, 0.96, "刷新作品信息", f"准备刷新 {len(works)} 个作品的统计信息")
+            for i, work in enumerate(works):
+                try:
+                    result = await self._refresh_work_info(task_id, work.aweme_id, {"sec_user_id": sec_user_id})
+                    if result and not result.get("error"):
+                        refreshed_count += 1
+                        if (i + 1) % 10 == 0:
+                            logger.info(f"[Task {task_id}] Refreshed {i + 1}/{len(works)} work info")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to refresh info for {work.aweme_id}: {e}")
+
         # Scrape comments if requested
         comments_count = 0
         if scrape_comments and works:
             logger.info(f"[Task {task_id}] Starting comment scraping for {len(works)} works")
-            progress_manager.update(task_id, 0.96, "采集评论", f"准备采集 {len(works)} 个作品的评论")
+            progress_manager.update(task_id, 0.97, "采集评论", f"准备采集 {len(works)} 个作品的评论")
             for i, work in enumerate(works):
                 try:
                     comments = await self.comment_scraper.scrape_comments(
@@ -104,10 +120,17 @@ class TaskWorker:
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
 
-        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品" + (f", {comments_count} 条评论" if comments_count else ""))
-        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {comments_count} comments scraped")
+        extra_info = []
+        if refreshed_count > 0:
+            extra_info.append(f"刷新 {refreshed_count} 个作品信息")
+        if comments_count > 0:
+            extra_info.append(f"{comments_count} 条评论")
+
+        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品" + (extra_info.join(", ") if extra_info else ""))
+        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {refreshed_count} refreshed, {comments_count} comments scraped")
         return {
             "count": len(works),
+            "refreshed_count": refreshed_count,
             "comments_count": comments_count,
             "types": {
                 "video": sum(1 for w in works if w.type == "video"),
@@ -122,6 +145,7 @@ class TaskWorker:
         progress_manager.update(task_id, 0.2, "采集作品列表", sec_user_id)
         max_count = params.get("max_count")
         scrape_comments = params.get("scrape_comments", False)
+        refresh_info = params.get("refresh_info", False)
         works = await self.user_scraper.scrape_works(
             sec_user_id, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
@@ -135,6 +159,18 @@ class TaskWorker:
         # Upsert all works to DB
         for work in works:
             await crud.upsert_work(work)
+
+        # Refresh work info if requested
+        refreshed_count = 0
+        if refresh_info and works:
+            progress_manager.update(task_id, 0.61, "刷新作品信息", f"准备刷新 {len(works)} 个作品")
+            for i, work in enumerate(works):
+                try:
+                    result = await self._refresh_work_info(task_id, work.aweme_id, {"sec_user_id": sec_user_id})
+                    if result and not result.get("error"):
+                        refreshed_count += 1
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to refresh info for {work.aweme_id}: {e}")
 
         # Download media if requested
         download_count = 0
@@ -172,6 +208,7 @@ class TaskWorker:
             "works_count": len(works),
             "media_downloaded": download_count,
             "comments_count": comments_count,
+            "refreshed_count": refreshed_count,
         }
 
     async def _search(self, task_id: int, keyword: str, params: dict) -> dict:
