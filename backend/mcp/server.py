@@ -56,6 +56,34 @@ async def search_users(keyword: str) -> str:
 
 
 @mcp_server.tool()
+async def lookup_user(keyword: str) -> str:
+    """Look up a Douyin user by nickname or douyin_id from local database.
+    Returns matching users with their sec_user_id.
+
+    Args:
+        keyword: User nickname or douyin_id to search for
+    """
+    users = await crud.search_users_local(keyword, limit=10)
+    if not users:
+        return json.dumps({"matches": [], "message": "No matching users found in local database"}, ensure_ascii=False)
+    return json.dumps({
+        "matches": [
+            {
+                "nickname": u.nickname,
+                "sec_user_id": u.sec_user_id,
+                "douyin_id": u.douyin_id,
+                "uid": u.uid,
+                "avatar_url": u.avatar_url,
+                "follower_count": u.follower_count,
+                "aweme_count": u.aweme_count,
+            }
+            for u in users
+        ],
+        "total": len(users),
+    }, ensure_ascii=False, default=str)
+
+
+@mcp_server.tool()
 async def get_user_info(sec_user_id: str) -> str:
     """Get stored user profile information from database.
 

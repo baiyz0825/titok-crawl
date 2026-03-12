@@ -258,7 +258,8 @@ cd frontend && npm run dev
 
 | 工具 | 参数 | 说明 |
 |------|------|------|
-| `get_user_info` | `sec_user_id: str` | 查询已存储的用户信息 |
+| `lookup_user` | `keyword: str` | 按昵称或抖音号查找用户，返回匹配用户的 sec_user_id 等信息 |
+| `get_user_info` | `sec_user_id: str` | 查询已存储的用户详细信息 |
 | `get_works` | `sec_user_id?, work_type?, page?, size?` | 查询作品列表，支持分页和筛选 |
 | `get_task_status` | `task_id: int` | 查询任务执行状态和进度 |
 
@@ -272,6 +273,7 @@ cd frontend && npm run dev
 
 通过 AI 客户端自然语言调用：
 
+- "帮我查一下用户名叫 xxx 的抖音号是多少"（→ `lookup_user`）
 - "帮我采集抖音用户 MS4wLjABAAAA... 的资料和作品"
 - "查看这个用户有多少个视频作品"
 - "分析一下这个用户的数据表现"
