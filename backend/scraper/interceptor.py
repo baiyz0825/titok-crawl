@@ -88,6 +88,28 @@ class ResponseInterceptor:
             except asyncio.QueueEmpty:
                 break
 
+    def get_captured_urls(self) -> list[str]:
+        """Get list of all captured API URLs (for debugging)."""
+        urls = []
+        # 创建一个临时队列来遍历
+        temp_items = []
+        while not self._responses.empty():
+            try:
+                item = self._responses.get_nowait()
+                temp_items.append(item)
+                urls.append(item.get("url", ""))
+            except asyncio.QueueEmpty:
+                break
+
+        # 把所有元素放回队列
+        for item in temp_items:
+            try:
+                self._responses.put_nowait(item)
+            except:
+                pass
+
+        return urls
+
     async def teardown(self):
         """Remove route interception."""
         if self._page:

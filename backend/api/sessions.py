@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -46,7 +46,17 @@ async def login_status():
 
 @router.get("/login-stream")
 async def login_stream(request: Request):
-    """SSE 端点：推送登录页面截图和状态"""
+    """SSE 端点：推送登录页面截图和状态
+
+    完整登录流程状态：
+    - qrcode: 显示二维码，等待扫码
+    - scanned: 已扫码，显示身份验证窗口
+    - verify: 短信已发送，等待输入验证码
+    - saving: 验证通过，询问是否保存登录信息
+    - success: 登录成功
+    - timeout: 超时
+    - error: 错误
+    """
 
     async def event_generator():
         global _login_page
@@ -63,40 +73,225 @@ async def login_stream(request: Request):
 
             await page.goto(settings.DOUYIN_BASE_URL, wait_until="domcontentloaded")
             logger.info("Login stream started, navigated to Douyin")
+            logger.info("⏳ Waiting for QR code scan...")
+            logger.info("⏰ Login timeout: 10 minutes")
 
-            timeout = 180
+            timeout = 600  # 增加到10分钟（用户需要找手机、扫码、等待短信、输入验证码）
+            verification_window_seen = False
+            verification_window_start_time = 0
+            last_phase = ""
+            current_phase = "qrcode"  # 初始化状态
+            login_success_countdown = 0  # 登录成功后的截图倒计时
+
+            # 立即推送初始状态（确保前端能收到）
+            yield f"event: status\ndata: {json.dumps({'phase': 'qrcode'})}\n\n"
+            last_phase = "qrcode"
+            logger.info("📤 Pushed initial state: qrcode")
+
             for i in range(timeout):
                 # 检查客户端是否断开
                 if await request.is_disconnected():
                     logger.info("Client disconnected from login stream")
                     break
 
-                # 截图推送
+                # 步骤0: 推送页面截图（用于前端显示登录过程中的所有状态）
+                # 包括：二维码、验证码输入、保存登录信息对话框、登录成功页面等
                 try:
-                    image = await engine.screenshot_page(page)
-                    yield f"event: screenshot\ndata: {json.dumps({'image': image})}\n\n"
+                    screenshot_uri = await engine.screenshot_page(page)
+                    yield f"event: screenshot\ndata: {json.dumps({'image': screenshot_uri})}\n\n"
                 except Exception as e:
-                    logger.warning(f"Screenshot failed: {e}")
+                    logger.debug(f"Screenshot failed: {e}")
 
-                # 检测登录状态
-                if await engine.check_login():
-                    await engine.save_cookies("default")
-                    yield f"event: status\ndata: {json.dumps({'phase': 'success'})}\n\n"
-                    logger.info("Login successful via stream")
-                    break
+                # 步骤1: 自动处理短信验证码弹窗
+                try:
+                    dialog_handled = await engine._handle_sms_consent_dialog(page)
+                    if dialog_handled:
+                        logger.info("✅ Stream: 已点击'接收短信验证码'")
 
-                # 检测验证码输入框
-                verify_info = await engine.detect_verify_code_input(page)
-                if verify_info:
-                    yield f"event: status\ndata: {json.dumps({'phase': 'verify', 'phone': verify_info['phone']})}\n\n"
-                else:
-                    yield f"event: status\ndata: {json.dumps({'phase': 'qrcode'})}\n\n"
+                        # 等待验证窗口和输入框出现（最多3秒）
+                        input_found = False
+                        for wait_i in range(6):  # 6 * 0.5 = 3秒
+                            await asyncio.sleep(0.5)
+                            input_box = await page.query_selector('#button-input')
+                            if input_box:
+                                input_found = True
+                                logger.info("✅ 验证码输入框已出现")
+                                break
 
-                await asyncio.sleep(1)
+                        if input_found:
+                            verification_window_seen = True
+                            verification_window_start_time = i
+
+                            # 推送 verify 状态，让前端显示验证码输入框
+                            current_phase = "verify"
+                            if current_phase != last_phase:
+                                yield f"event: status\ndata: {json.dumps({'phase': current_phase})}\n\n"
+                                last_phase = current_phase
+                                logger.info("📤 Pushed verify state after input box appeared")
+                        else:
+                            logger.warning("⚠️ 点击后未找到输入框，可能需要重新点击")
+                except Exception as e:
+                    logger.debug(f"Auto-handle SMS dialog failed: {e}")
+
+                # 步骤2: 检测验证窗口超时
+                if verification_window_seen and verification_window_start_time:
+                    elapsed = i - verification_window_start_time
+                    if elapsed > 120:  # 2分钟后检查
+                        qr_visible = await page.query_selector('#animate_qrcode_container')
+                        if qr_visible and await qr_visible.is_visible():
+                            logger.warning("❌ Stream: 验证窗口超时，回到扫码状态")
+                            verification_window_seen = False
+                            verification_window_start_time = 0
+                            current_phase = "qrcode"  # 重置状态
+
+                # 步骤3: 检测各种状态
+                # 注意：不再在每次循环开始时重置 current_phase = "qrcode"
+                # 而是保留上一次的状态，只在明确的状态变化时更新
+
+                try:
+                    # 检测登录状态（优先检查）
+                    if await engine.check_login():
+                        await engine._handle_save_login_dialog(page)
+                        await engine.save_cookies("default")
+
+                        # 登录成功后自动采集并保存当前用户信息
+                        try:
+                            from backend.db import crud
+                            from backend.scraper.user_scraper import UserScraper
+
+                            sec_user_id = await engine.get_current_user_id()
+                            if sec_user_id:
+                                # 检查数据库中是否已有该用户
+                                existing_user = await crud.get_user(sec_user_id)
+                                if not existing_user:
+                                    # 数据库中没有，采集用户资料
+                                    logger.info(f"First login for user {sec_user_id}, scraping profile...")
+                                    scraper = UserScraper()
+                                    user_data = await scraper.scrape_profile(sec_user_id)
+                                    if user_data:
+                                        await crud.upsert_user(user_data)
+                                        logger.info(f"✅ Saved current user: {user_data.nickname} ({sec_user_id})")
+                                    else:
+                                        logger.warning(f"Failed to scrape profile for {sec_user_id}")
+                                else:
+                                    logger.info(f"✅ User already in database: {existing_user.nickname} ({sec_user_id})")
+                            else:
+                                logger.warning("Could not get current user ID after login")
+                        except Exception as scrape_error:
+                            logger.error(f"Failed to scrape/save current user after login: {scrape_error}")
+
+                        current_phase = "success"
+                        if current_phase != last_phase:
+                            yield f"event: status\ndata: {json.dumps({'phase': current_phase})}\n\n"
+                            last_phase = current_phase
+                        logger.info("✅ Login successful via stream")
+
+                        # 设置登录成功后的截图倒计时，继续推送10次截图（5秒）
+                        # 让用户看到"保存登录信息"对话框和登录成功页面
+                        if login_success_countdown == 0:
+                            login_success_countdown = 10
+                        # 不要立即break，继续循环推送截图
+
+                    # 检测页面文字内容来判断状态
+                    try:
+                        page_text = await page.evaluate("() => document.body.innerText")
+                    except Exception as e:
+                        logger.debug(f"Failed to get page text: {e}")
+                        page_text = ""
+
+                    # 优先检测"短信已发送"（说明已经点击成功，进入验证码输入阶段）
+                    if "短信已发送" in page_text or "请输入验证码" in page_text:
+                        # 重要：必须确认验证窗口实际存在
+                        verify_window = await page.query_selector('#uc-second-verify')
+                        if verify_window and await verify_window.is_visible():
+                            # 提取手机号（支持多种格式）
+                            import re
+                            # 格式1: 181******11（3位数字 + 多个星号 + 2-4位数字）
+                            phone_match = re.search(r'1[3-9]\d{1}[*\*]{6,}\d{2,4}', page_text)
+                            if not phone_match:
+                                # 格式2: 181****11（较少星号）
+                                phone_match = re.search(r'1[3-9]\d{1}[*\*]{4,}\d{2,4}', page_text)
+                            if not phone_match:
+                                # 格式3: 181****0011（更多数字）
+                                phone_match = re.search(r'1[3-9]\d[*\*]+\d+', page_text)
+
+                        phone = phone_match.group(0) if phone_match else ""
+
+                        # 调试：只在第一次时打印详细信息
+                        if current_phase != "verify" or (phone and i % 30 == 0):
+                            if phone:
+                                logger.info(f"✅ 提取到手机号: {phone}")
+                            else:
+                                # 打印相关文本片段帮助调试
+                                phone_context = re.search(r'.{0,30}1\d.*?\d{2,4}.{0,10}', page_text)
+                                if phone_context:
+                                    logger.debug(f"[Phone Context] {phone_context.group(0)[:60]}")
+
+                        # 即使没有手机号也推送 verify 状态
+                        current_phase = "verify"
+                        if current_phase != last_phase:
+                            yield f"event: status\ndata: {json.dumps({'phase': current_phase, 'phone': phone})}\n\n"
+                            last_phase = current_phase
+                            logger.info(f"📱 State: {current_phase}, phone: {phone}")
+                        # 不再 continue，让循环继续执行到截图和sleep
+                    else:
+                        # 文本包含"短信已发送"但窗口不存在，说明窗口已消失
+                        if "短信已发送" in page_text or "请输入验证码" in page_text:
+                            logger.info("⚠️ 检测到验证文本但窗口已消失，保持 verify 状态")
+                            # 保持 verify 状态，不改变
+                            if current_phase != "verify":
+                                current_phase = "verify"
+                                if current_phase != last_phase:
+                                    yield f"event: status\ndata: {json.dumps({'phase': current_phase, 'phone': ''})}\n\n"
+                                    last_phase = current_phase
+
+                    # 检测扫码后的身份验证窗口（点击前）
+                    if "接收短信验证码" in page_text or "发送短信验证" in page_text:
+                        # 确认还没有发送短信（避免重复点击）
+                        if "短信已发送" not in page_text:
+                            current_phase = "scanned"
+
+                    # 状态变化时推送
+                    if current_phase != last_phase:
+                        yield f"event: status\ndata: {json.dumps({'phase': current_phase})}\n\n"
+                        last_phase = current_phase
+                        if current_phase != "qrcode":
+                            logger.info(f"🔄 State changed: {last_phase} → {current_phase}")
+
+                except Exception as e:
+                    logger.debug(f"Status detection error: {e}")
+
+                # 步骤3.5: 如果之前在verify状态但现在不在了，说明验证窗口消失了，尝试重新点击
+                if last_phase == "verify" and current_phase != "verify" and current_phase != "success":
+                    try:
+                        # 检查是否有"接收短信验证码"按钮
+                        page_text = await page.evaluate("() => document.body.innerText")
+                        if "接收短信验证码" in page_text or "发送短信验证" in page_text:
+                            logger.info("🔄 验证窗口消失，尝试重新点击'接收短信验证码'")
+                            handled = await engine._handle_sms_consent_dialog(page)
+                            if handled:
+                                logger.info("✅ 重新点击成功")
+                                verification_window_seen = True
+                                verification_window_start_time = i
+                    except Exception as e:
+                        logger.debug(f"Re-click failed: {e}")
+
+                # 步骤4: 等待0.5秒（增加截图频率）
+                await asyncio.sleep(0.5)
+
+                # 步骤5: 检查登录成功后的截图倒计时
+                if login_success_countdown > 0:
+                    login_success_countdown -= 1
+                    if login_success_countdown == 0:
+                        logger.info("✅ Login success screenshots completed, ending stream")
+                        break
+                    # 继续循环，不再执行其他状态检测
+                    continue
+
             else:
                 # 循环正常结束 = 超时
                 yield f"event: status\ndata: {json.dumps({'phase': 'timeout'})}\n\n"
-                logger.warning("Login stream timeout")
+                logger.warning("⏰ Login stream timeout")
 
         except Exception as e:
             logger.error(f"Login stream error: {e}")
@@ -132,3 +327,32 @@ async def input_code(body: CodeInput):
 
     ok = await engine.fill_verify_code(page, body.code)
     return {"success": ok}
+
+
+@router.get("/current-user")
+async def get_current_user():
+    """获取当前登录用户信息（从数据库读取）"""
+    # 先检查是否已登录
+    is_logged_in = await engine.check_login()
+    if not is_logged_in:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 获取当前用户的 sec_user_id
+    try:
+        from backend.db import crud
+
+        sec_user_id = await engine.get_current_user_id()
+        if sec_user_id:
+            # 从数据库中获取完整信息
+            user = await crud.get_user(sec_user_id)
+            if user:
+                return user.model_dump()
+            else:
+                raise HTTPException(status_code=404, detail="用户信息未找到，请重新登录以采集信息")
+        else:
+            raise HTTPException(status_code=404, detail="无法获取当前用户信息")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get current user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

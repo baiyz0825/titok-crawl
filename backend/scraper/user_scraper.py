@@ -19,22 +19,125 @@ class UserScraper:
         self.interceptor = ResponseInterceptor()
 
     async def scrape_profile(self, sec_user_id: str) -> User | None:
+        """Get user profile from API or SSR data."""
+        # 优先尝试从 SSR 数据读取（对于当前登录用户）
+        current_user_id = await engine.get_current_user_id()
+        is_current_user = (current_user_id == sec_user_id)
+
+        if is_current_user:
+            logger.info(f"Trying to get current user {sec_user_id} from SSR data")
+            user_from_ssr = await self._get_user_from_ssr(sec_user_id)
+            if user_from_ssr:
+                # 保存到数据库
+                await crud.upsert_user(user_from_ssr)
+                logger.info(f"✅ Got user from SSR: {user_from_ssr.nickname} ({sec_user_id})")
+                return user_from_ssr
+            else:
+                logger.info(f"No SSR data for current user, falling back to API")
+
+        # SSR 数据不可用，使用 API 拦截方式
+        return await self._scrape_profile_from_api(sec_user_id, is_current_user)
+
+    async def _get_user_from_ssr(self, sec_user_id: str) -> User | None:
+        """Try to extract user info from SSR_RENDER_DATA."""
+        try:
+            page = await engine.get_page()
+
+            # 从 SSR_RENDER_DATA 读取用户信息
+            # ✅ 正确路径: window.SSR_RENDER_DATA.app.user.info
+            user_data = await page.evaluate("""
+                () => {
+                    if (!window.SSR_RENDER_DATA?.app?.user?.info) {
+                        return null;
+                    }
+
+                    const info = window.SSR_RENDER_DATA.app.user.info;
+                    const user = window.SSR_RENDER_DATA.app.user;
+
+                    return {
+                        sec_user_id: info.secUid || info.uid,
+                        nickname: info.nickname || info.realName || user.nickname || info.shortId,
+                        avatar_url: info.avatarUrl || info.avatar300Url,
+                        douyin_id: info.shortId,
+                        signature: info.desc || user.desc || '',
+                        following_count: info.followingCount || user.followingCount || 0,
+                        follower_count: info.followerCount || user.followerCount || 0,
+                        favoriting_count: info.favoritingCount || user.favoritingCount || 0,
+                        aweme_count: info.awemeCount || user.awemeCount || 0,
+                        total_favorited: info.totalFavorited || user.totalFavorited || 0
+                    };
+                }
+            """)
+
+            if not user_data or not user_data.get('sec_user_id'):
+                logger.debug(f"SSR: No user data found for {sec_user_id}")
+                return None
+
+            # 补充缺失的字段
+            user_data['backend_id'] = sec_user_id
+
+            # 确保必需字段存在
+            if not user_data.get('nickname'):
+                user_data['nickname'] = f"用户_{sec_user_id[:8]}"
+
+            logger.info(f"✅ SSR: Found user {user_data['nickname']} ({sec_user_id})")
+
+            # 解析用户对象
+            user = User(**user_data)
+            return user
+
+        except Exception as e:
+            logger.debug(f"Failed to get user from SSR: {e}")
+            return None
+
+    async def _scrape_profile_from_api(self, sec_user_id: str, is_current_user: bool) -> User | None:
         """Navigate to user page and intercept profile API response."""
         page = await engine.get_page()
         self.interceptor.clear()
         await self.interceptor.setup(page)
 
         try:
-            url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
-            ok = await engine.safe_goto(page, url)
-            if not ok:
-                logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
-                return None
+            # 检查是否已经在正确的用户页面
+            current_url = page.url
+            current_user_id = await engine.get_current_user_id()
+            is_current_user = (current_user_id == sec_user_id)
+
+            # 如果已经在目标用户页面，不需要重新导航
+            target_in_url = f"/user/{sec_user_id}" if not is_current_user else "/user/self"
+            already_on_page = (
+                (is_current_user and "/user/self" in current_url) or
+                (not is_current_user and f"/user/{sec_user_id}" in current_url)
+            )
+
+            if not already_on_page:
+                # 需要导航到目标页面
+                if is_current_user:
+                    logger.info(f"Navigating to /user/self for current user: {sec_user_id}")
+                    url = f"{settings.DOUYIN_BASE_URL}/user/self"
+                else:
+                    logger.info(f"Navigating to /user/{sec_user_id}")
+                    url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
+
+                ok = await engine.safe_goto(page, url)
+                if not ok:
+                    logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
+                    return None
+            else:
+                logger.info(f"Already on user page for {sec_user_id}, skipping navigation")
 
             # Wait for profile API response
-            data = await self.interceptor.wait_for("user/profile/other", timeout=15)
+            # 优先尝试 user/profile/other（更常见），然后是 user/profile/self
+            data = await self.interceptor.wait_for("user/profile/other", timeout=10)
+            if not data:
+                # 尝试 self 端点（当前用户可能使用）
+                logger.info("No data from user/profile/other, trying user/profile/self")
+                data = await self.interceptor.wait_for("user/profile/self", timeout=5)
+
             if not data:
                 logger.warning(f"No profile data received for {sec_user_id}")
+                # 调试：列出所有拦截到的 API
+                all_apis = self.interceptor.get_captured_urls()
+                logger.warning(f"Captured APIs: {all_apis}")
                 return None
 
             user_info = data.get("user", {})
@@ -124,11 +227,151 @@ class UserScraper:
                 if on_page:
                     on_page(page_count, effective_max)
 
-            # Save all works to DB
-            for work in all_works:
-                await crud.upsert_work(work)
-
             logger.info(f"Scraped {len(all_works)} works for {sec_user_id[:20]}...")
+            return all_works
+
+        finally:
+            await self.interceptor.teardown()
+
+    async def scrape_likes(
+        self, sec_user_id: str, max_pages: int | None = None,
+        on_page: Callable | None = None,
+    ) -> list[Work]:
+        """Scrape current user's liked videos (喜欢) with pagination."""
+        page = await engine.get_page()
+        self.interceptor.clear()
+        await self.interceptor.setup(page)
+
+        all_works = []
+        page_count = 0
+
+        try:
+            # Navigate to likes page
+            url = f"{settings.DOUYIN_BASE_URL}/user/self?showTab=like"
+            ok = await engine.safe_goto(page, url)
+            if not ok:
+                logger.error("Failed to load likes page (captcha timeout)")
+                return []
+
+            # Wait for initial likes data (module/feed API with module_id=3003101)
+            data = await self.interceptor.wait_for("module/feed", timeout=15)
+            if data:
+                aweme_list = data.get("aweme_list", [])
+                works = self._parse_works_from_list(aweme_list, sec_user_id)
+                all_works.extend(works)
+                page_count += 1
+                logger.info(f"Likes Page {page_count}: got {len(works)} works")
+
+            # Pagination loop
+            effective_max = max_pages or 999
+            has_more = data.get("has_more", 0) if data else 0
+            if on_page:
+                on_page(page_count, effective_max)
+
+            while has_more and page_count < effective_max:
+                # Random delay
+                delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
+                await asyncio.sleep(delay)
+
+                # Check for captcha
+                if await engine.detect_captcha(page):
+                    resolved = await engine.wait_for_captcha_resolve(page)
+                    if not resolved:
+                        break
+
+                # Scroll to trigger next page
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1000)
+
+                data = await self.interceptor.wait_for("module/feed", timeout=10)
+                if not data:
+                    break
+
+                aweme_list = data.get("aweme_list", [])
+                works = self._parse_works_from_list(aweme_list, sec_user_id)
+                if not works:
+                    break
+
+                all_works.extend(works)
+                page_count += 1
+                has_more = data.get("has_more", 0)
+                logger.info(f"Likes Page {page_count}: got {len(works)} works (total: {len(all_works)})")
+                if on_page:
+                    on_page(page_count, effective_max)
+
+            logger.info(f"Scraped {len(all_works)} liked videos")
+            return all_works
+
+        finally:
+            await self.interceptor.teardown()
+
+    async def scrape_favorites(
+        self, sec_user_id: str, max_pages: int | None = None,
+        on_page: Callable | None = None,
+    ) -> list[Work]:
+        """Scrape current user's favorite videos (收藏) with pagination."""
+        page = await engine.get_page()
+        self.interceptor.clear()
+        await self.interceptor.setup(page)
+
+        all_works = []
+        page_count = 0
+
+        try:
+            # Navigate to favorites page
+            url = f"{settings.DOUYIN_BASE_URL}/user/self?showTab=favorite_collection"
+            ok = await engine.safe_goto(page, url)
+            if not ok:
+                logger.error("Failed to load favorites page (captcha timeout)")
+                return []
+
+            # Wait for initial favorites data
+            data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
+            if data:
+                aweme_list = data.get("aweme_list", [])
+                works = self._parse_works_from_list(aweme_list, sec_user_id)
+                all_works.extend(works)
+                page_count += 1
+                logger.info(f"Favorites Page {page_count}: got {len(works)} works")
+
+            # Pagination loop
+            effective_max = max_pages or 999
+            has_more = data.get("has_more", 0) if data else 0
+            if on_page:
+                on_page(page_count, effective_max)
+
+            while has_more and page_count < effective_max:
+                # Random delay
+                delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
+                await asyncio.sleep(delay)
+
+                # Check for captcha
+                if await engine.detect_captcha(page):
+                    resolved = await engine.wait_for_captcha_resolve(page)
+                    if not resolved:
+                        break
+
+                # Scroll to trigger next page
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1000)
+
+                data = await self.interceptor.wait_for("aweme/favorite", timeout=10)
+                if not data:
+                    break
+
+                aweme_list = data.get("aweme_list", [])
+                works = self._parse_works_from_list(aweme_list, sec_user_id)
+                if not works:
+                    break
+
+                all_works.extend(works)
+                page_count += 1
+                has_more = data.get("has_more", 0)
+                logger.info(f"Favorites Page {page_count}: got {len(works)} works (total: {len(all_works)})")
+                if on_page:
+                    on_page(page_count, effective_max)
+
+            logger.info(f"Scraped {len(all_works)} favorite videos")
             return all_works
 
         finally:
@@ -165,6 +408,20 @@ class UserScraper:
     def _parse_works_response(self, data: dict, sec_user_id: str) -> list[Work]:
         """Parse works list from API response."""
         aweme_list = data.get("aweme_list", [])
+        works = []
+
+        for item in aweme_list:
+            try:
+                work = self._parse_single_work(item, sec_user_id)
+                works.append(work)
+            except Exception as e:
+                logger.warning(f"Failed to parse work: {e}")
+                continue
+
+        return works
+
+    def _parse_works_from_list(self, aweme_list: list, sec_user_id: str) -> list[Work]:
+        """Parse works from aweme_list directly."""
         works = []
 
         for item in aweme_list:
