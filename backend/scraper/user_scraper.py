@@ -407,6 +407,123 @@ class UserScraper:
         finally:
             await self.interceptor.teardown()
 
+    async def scrape_following(
+        self, sec_user_id: str, max_count: int | None = None,
+        on_page: Callable | None = None,
+    ) -> list[dict]:
+        """Scrape user's following list with pagination.
+
+        Returns list of user info dicts with keys:
+        - sec_user_id
+        - nickname
+        - avatar_url
+        - douyin_id
+        """
+        page = await engine.get_page()
+        self.interceptor.clear()
+        await self.interceptor.setup(page)
+
+        all_users = []
+        page_count = 0
+
+        try:
+            # Navigate to user's following page
+            url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
+            ok = await engine.safe_goto(page, url)
+            if not ok:
+                logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
+                return []
+
+            # Click on following tab
+            logger.info(f"Navigating to following tab for {sec_user_id}")
+            try:
+                # Try to click the following tab
+                await page.evaluate(f"window.location.href = '{url}?showTab=following'")
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.warning(f"Failed to navigate to following tab: {e}")
+
+            # Wait for following data
+            logger.info(f"Waiting for following list API...")
+            data = await self.interceptor.wait_for("following/list", timeout=15)
+            if not data:
+                # Try alternative API endpoint
+                logger.warning("No data from following/list, trying user/following")
+                data = await self.interceptor.wait_for("user/following", timeout=5)
+
+            if data:
+                user_list = data.get("user_list", [])
+                for user_info in user_list:
+                    user_dict = {
+                        "sec_user_id": user_info.get("sec_uid") or user_info.get("secUserId"),
+                        "nickname": user_info.get("nickname") or user_info.get("nickName"),
+                        "avatar_url": user_info.get("avatar_thumb", {}).get("url_list", [""])[0]
+                            if isinstance(user_info.get("avatar_thumb"), dict)
+                            else user_info.get("avatarUrl") or "",
+                        "douyin_id": user_info.get("unique_id") or user_info.get("shortId") or "",
+                    }
+                    if user_dict["sec_user_id"]:
+                        all_users.append(user_dict)
+
+                page_count += 1
+                logger.info(f"Following Page {page_count}: got {len(user_list)} users")
+
+            # Pagination loop
+            effective_max = max_count or 9999
+            has_more = data.get("has_more", 0) if data else 0
+            if on_page:
+                on_page(page_count, effective_max)
+
+            while has_more and len(all_users) < effective_max:
+                # Random delay
+                delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
+                await asyncio.sleep(delay)
+
+                # Check for captcha
+                if await engine.detect_captcha(page):
+                    resolved = await engine.wait_for_captcha_resolve(page)
+                    if not resolved:
+                        break
+
+                # Scroll to trigger next page
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1000)
+
+                data = await self.interceptor.wait_for("following/list", timeout=10)
+                if not data:
+                    data = await self.interceptor.wait_for("user/following", timeout=5)
+                if not data:
+                    break
+
+                user_list = data.get("user_list", [])
+                for user_info in user_list:
+                    user_dict = {
+                        "sec_user_id": user_info.get("sec_uid") or user_info.get("secUserId"),
+                        "nickname": user_info.get("nickname") or user_info.get("nickName"),
+                        "avatar_url": user_info.get("avatar_thumb", {}).get("url_list", [""])[0]
+                            if isinstance(user_info.get("avatar_thumb"), dict)
+                            else user_info.get("avatarUrl") or "",
+                        "douyin_id": user_info.get("unique_id") or user_info.get("shortId") or "",
+                    }
+                    if user_dict["sec_user_id"]:
+                        all_users.append(user_dict)
+
+                page_count += 1
+                has_more = data.get("has_more", 0)
+                logger.info(f"Following Page {page_count}: got {len(user_list)} users (total: {len(all_users)})")
+                if on_page:
+                    on_page(page_count, effective_max)
+
+            # Trim to max_count
+            if max_count and len(all_users) > max_count:
+                all_users = all_users[:max_count]
+
+            logger.info(f"Scraped {len(all_users)} following users for {sec_user_id[:20]}...")
+            return all_users
+
+        finally:
+            await self.interceptor.teardown()
+
     def _parse_user(self, user_info: dict, sec_user_id: str) -> User:
         """Parse user info from API response."""
         return User(

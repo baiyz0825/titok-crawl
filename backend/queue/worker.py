@@ -37,6 +37,8 @@ class TaskWorker:
             return await self._scrape_likes(task_id, target, parsed_params)
         elif task_type == "user_favorites":
             return await self._scrape_favorites(task_id, target, parsed_params)
+        elif task_type == "user_following":
+            return await self._scrape_following(task_id, target, parsed_params)
         elif task_type == "search":
             return await self._search(task_id, target, parsed_params)
         elif task_type == "media_download":
@@ -372,4 +374,75 @@ class TaskWorker:
                 "video": sum(1 for w in processed_works if w.type == "video"),
                 "note": sum(1 for w in processed_works if w.type == "note"),
             },
+        }
+
+    async def _scrape_following(self, task_id: int, sec_user_id: str, params: dict) -> dict:
+        """Scrape user's following list with optional recursive collection."""
+        max_count = params.get("max_count")
+        collect_profile = params.get("collect_profile", False)
+        recursive = params.get("recursive", False)
+        recursive_depth = params.get("recursive_depth", 1)
+
+        logger.info(f"[Task {task_id}] Starting scrape_following for {sec_user_id}, max_count={max_count}, collect_profile={collect_profile}, recursive={recursive}, depth={recursive_depth}")
+        progress_manager.update(task_id, 0.05, "开始采集关注列表", f"用户 {sec_user_id[:20]}...")
+
+        # Use a set to track processed users and avoid duplicates
+        processed_users = set()
+        all_users_data = []
+
+        # Recursive collection function
+        async def collect_following_recursive(target_id: str, current_depth: int):
+            if current_depth > recursive_depth:
+                return
+
+            if target_id in processed_users:
+                return
+
+            processed_users.add(target_id)
+            progress_manager.update(task_id, 0.1, f"采集关注列表 (深度 {current_depth}/{recursive_depth})", f"已处理 {len(processed_users)} 个用户")
+
+            # Get following list for this user
+            following_users = await self.user_scraper.scrape_following(
+                target_id, max_count=None,  # No limit per user
+                on_page=None
+            )
+
+            logger.info(f"[Task {task_id}] Found {len(following_users)} following for {target_id[:20]}...")
+
+            for user_info in following_users:
+                following_id = user_info["sec_user_id"]
+
+                # Collect profile if requested
+                if collect_profile and following_id not in processed_users:
+                    try:
+                        progress_manager.update(task_id, 0.1, f"采集用户资料 ({len(all_users_data)})", user_info["nickname"] or following_id[:20])
+                        user = await self.user_scraper.scrape_profile(following_id)
+                        if user:
+                            await crud.upsert_user(user)
+                            all_users_data.append(user_info)
+                            logger.info(f"[Task {task_id}] Saved profile for {user.nickname} ({following_id[:20]}...)")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to scrape profile for {following_id[:20]}: {e}")
+                        all_users_data.append(user_info)  # Add basic info even if profile scrape fails
+                else:
+                    all_users_data.append(user_info)
+
+                # Recursive collection
+                if recursive and current_depth < recursive_depth:
+                    await collect_following_recursive(following_id, current_depth + 1)
+
+        # Start collection
+        await collect_following_recursive(sec_user_id, 1)
+
+        progress_manager.update(task_id, 0.95, "保存数据", f"共采集 {len(all_users_data)} 个关注用户")
+        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(all_users_data)} 个用户，深度 {recursive_depth}")
+
+        logger.info(f"[Task {task_id}] Completed: {len(all_users_data)} users collected, {len(processed_users)} unique users processed")
+
+        return {
+            "total": len(all_users_data),
+            "unique": len(processed_users),
+            "collect_profile": collect_profile,
+            "recursive": recursive,
+            "depth": recursive_depth,
         }

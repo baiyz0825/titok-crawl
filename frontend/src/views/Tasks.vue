@@ -97,6 +97,7 @@
             <el-option label="全量采集" value="user_all" />
             <el-option label="喜欢列表" value="user_likes" />
             <el-option label="收藏列表" value="user_favorites" />
+            <el-option label="关注列表" value="user_following" />
           </el-select>
         </el-form-item>
 
@@ -138,7 +139,7 @@
           </div>
         </el-form-item>
 
-        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites'].includes(form.task_type)" label="最大采集数量">
+        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites', 'user_following'].includes(form.task_type)" label="最大采集数量">
           <el-input-number v-model="form.max_count" :min="1" :max="1000" placeholder="不限制" style="width: 100%" />
           <span style="font-size: 12px; color: #94a3b8; margin-top: 4px; display: block;">留空则采集全部</span>
         </el-form-item>
@@ -147,6 +148,23 @@
           <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
             <el-checkbox value="download_media" label="下载媒体文件（封面图/视频/图文图片）" />
             <el-checkbox value="scrape_comments" label="采集评论数据" />
+          </el-checkbox-group>
+        </el-form-item>
+
+        <el-form-item v-if="form.task_type === 'user_following'" label="关注列表选项">
+          <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox value="collect_profile" label="采集用户资料（头像、昵称、简介等）" />
+            <el-checkbox value="recursive" label="递归采集（采集关注用户的关注列表）">
+              <template #default>
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-left: 24px; margin-top: 8px;" v-if="form.sync_types.includes('recursive')">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: #64748b;">递归深度：</span>
+                    <el-input-number v-model="form.recursive_depth" :min="1" :max="3" placeholder="最多3层" style="width: 120px" />
+                    <span style="font-size: 12px; color: #94a3b8;">（1=仅关注，2=关注+关注的朋友，3=再扩展一层）</span>
+                  </div>
+                </div>
+              </template>
+            </el-checkbox>
           </el-checkbox-group>
         </el-form-item>
       </el-form>
@@ -183,7 +201,8 @@ const form = ref({
   target: '',
   max_pages: undefined,
   max_count: undefined,
-  sync_types: [] as string[]
+  sync_types: [] as string[],
+  recursive_depth: 1
 })
 const userOptions = ref<any[]>([])
 const userSearchLoading = ref(false)
@@ -196,6 +215,7 @@ function typeLabel(t: string) {
     user_all: '全量采集',
     user_likes: '喜欢列表',
     user_favorites: '收藏列表',
+    user_following: '关注列表',
     search: '搜索',
     comments: '评论',
     media_download: '媒体下载',
@@ -273,6 +293,13 @@ async function createTask() {
     if (form.value.sync_types.includes('scrape_comments')) {
       params.scrape_comments = true
     }
+    if (form.value.sync_types.includes('collect_profile')) {
+      params.collect_profile = true
+    }
+    if (form.value.sync_types.includes('recursive')) {
+      params.recursive = true
+      params.recursive_depth = form.value.recursive_depth || 1
+    }
 
     await client.post('/tasks', params)
     ElMessage.success('任务已创建')
@@ -291,7 +318,8 @@ function resetForm() {
     target: '',
     max_pages: undefined,
     max_count: undefined,
-    sync_types: []
+    sync_types: [],
+    recursive_depth: 1
   }
 }
 
