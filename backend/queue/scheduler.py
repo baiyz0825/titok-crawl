@@ -101,65 +101,104 @@ class TaskScheduler:
         return False
 
     async def _run_loop(self):
-        """Main scheduler loop."""
+        """Main scheduler loop - supports concurrent task execution."""
+        # Semaphore to control concurrent task execution
+        max_concurrent = getattr(settings, 'MAX_CONCURRENT_TASKS', 3)
+        self._task_semaphore = asyncio.Semaphore(max_concurrent)
+        self._running_tasks: dict[int, asyncio.Task] = {}
+
+        logger.info(f"Scheduler started with max {max_concurrent} concurrent tasks")
+
         while self._running:
             try:
-                task = await crud.get_next_pending_task()
-                if task is None:
-                    await asyncio.sleep(2)
+                # Check if we can start more tasks
+                if len(self._running_tasks) >= max_concurrent:
+                    # Wait for at least one task to complete
+                    await asyncio.wait(
+                        list(self._running_tasks.values()),
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    # Clean up completed tasks
+                    completed = [tid for tid, t in self._running_tasks.items() if t.done()]
+                    for tid in completed:
+                        del self._running_tasks[tid]
                     continue
 
-                self._current_task_id = task.id
-
-                # Mark as running
-                now = datetime.now().isoformat()
-                await crud.update_task(task.id, status="running", started_at=now)
-                logger.info(f"Executing task #{task.id}: {task.task_type} -> {task.target}")
-
-                try:
-                    result = await self.worker.execute(
-                        task.id, task.task_type, task.target, task.params
-                    )
-                    now = datetime.now().isoformat()
-                    await crud.update_task(
-                        task.id,
-                        status="completed",
-                        progress=1.0,
-                        result=json.dumps(result, ensure_ascii=False),
-                        completed_at=now,
-                    )
-                    logger.info(f"Task #{task.id} completed")
-
-                except Exception as e:
-                    logger.error(f"Task #{task.id} failed: {e}")
-                    retry_count = (task.retry_count or 0) + 1
-                    if retry_count < task.max_retries:
-                        await crud.update_task(
-                            task.id,
-                            status="pending",
-                            retry_count=retry_count,
-                            error_message=str(e),
-                        )
-                        logger.info(f"Task #{task.id} will retry ({retry_count}/{task.max_retries})")
+                # Get next pending task
+                task = await crud.get_next_pending_task()
+                if task is None:
+                    if self._running_tasks:
+                        # Wait a bit for running tasks
+                        await asyncio.sleep(1)
                     else:
-                        await crud.update_task(
-                            task.id,
-                            status="failed",
-                            retry_count=retry_count,
-                            error_message=str(e),
-                        )
+                        await asyncio.sleep(2)
+                    continue
 
-                self._current_task_id = None
-
-                # Random delay between tasks
-                delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
-                await asyncio.sleep(delay)
+                # Start task execution with semaphore
+                task_coro = self._execute_task_with_semaphore(task)
+                task_future = asyncio.create_task(task_coro)
+                self._running_tasks[task.id] = task_future
+                logger.info(f"Started task #{task.id} ({len(self._running_tasks)}/{max_concurrent} concurrent)")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Scheduler error: {e}")
                 await asyncio.sleep(5)
+
+        # Wait for all running tasks to complete
+        if self._running_tasks:
+            logger.info(f"Waiting for {len(self._running_tasks)} running tasks to complete...")
+            await asyncio.gather(*self._running_tasks.values(), return_exceptions=True)
+
+    async def _execute_task_with_semaphore(self, task):
+        """Execute a single task with semaphore control."""
+        async with self._task_semaphore:
+            self._current_task_id = task.id
+
+            # Mark as running
+            now = datetime.now().isoformat()
+            await crud.update_task(task.id, status="running", started_at=now)
+            logger.info(f"Executing task #{task.id}: {task.task_type} -> {task.target}")
+
+            try:
+                result = await self.worker.execute(
+                    task.id, task.task_type, task.target, task.params
+                )
+                now = datetime.now().isoformat()
+                await crud.update_task(
+                    task.id,
+                    status="completed",
+                    progress=1.0,
+                    result=json.dumps(result, ensure_ascii=False),
+                    completed_at=now,
+                )
+                logger.info(f"Task #{task.id} completed")
+
+            except Exception as e:
+                logger.error(f"Task #{task.id} failed: {e}")
+                retry_count = (task.retry_count or 0) + 1
+                if retry_count < task.max_retries:
+                    await crud.update_task(
+                        task.id,
+                        status="pending",
+                        retry_count=retry_count,
+                        error_message=str(e),
+                    )
+                    logger.info(f"Task #{task.id} will retry ({retry_count}/{task.max_retries})")
+                else:
+                    await crud.update_task(
+                        task.id,
+                        status="failed",
+                        retry_count=retry_count,
+                        error_message=str(e),
+                    )
+
+            self._current_task_id = None
+
+            # Random delay between tasks
+            delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
+            await asyncio.sleep(delay)
 
     async def _schedule_check_loop(self):
         """Check for due scheduled tasks every 60 seconds."""

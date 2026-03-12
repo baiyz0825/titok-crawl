@@ -26,7 +26,7 @@ class Settings:
     LOG_FILE = DATA_DIR / "logs" / "app.jsonl"
 
     # Task queue
-    MAX_CONCURRENT_TASKS = 1
+    MAX_CONCURRENT_TASKS = 3  # 支持同时执行3个任务
 
     # Server ports (从环境变量读取，支持高位端口避免冲突)
     API_HOST = "0.0.0.0"
