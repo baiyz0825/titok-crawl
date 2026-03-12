@@ -33,13 +33,29 @@
           <div v-else class="user-avatar-placeholder">{{ (user.nickname || '?')[0] }}</div>
           <div class="user-info">
             <div class="user-name">{{ user.nickname || user.sec_user_id }}</div>
-            <div class="user-meta">{{ user.scrape_status?.works_count || 0 }} 作品</div>
+            <div class="user-meta">{{ userStats[user.sec_user_id]?.works_count ?? (user.aweme_count || 0) }} 作品</div>
           </div>
         </div>
         <div v-if="filteredUsers.length === 0 && !loadingUsers" class="empty-hint">
           {{ searchQuery ? '无匹配用户' : '暂无用户数据' }}
         </div>
         <div v-if="loadingUsers" class="loading-hint">加载中...</div>
+      </div>
+
+      <!-- 选中用户统计信息 -->
+      <div v-if="selectedUser && selectedUserDetail" class="user-stats-bar">
+        <div class="stat-item">
+          <span class="stat-num">{{ selectedUserDetail.works_count }}</span>
+          <span class="stat-label">作品</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-num">{{ selectedUserDetail.comments_count }}</span>
+          <span class="stat-label">评论</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-num">{{ selectedUserDetail.media_count }}</span>
+          <span class="stat-label">媒体</span>
+        </div>
       </div>
     </aside>
 
@@ -103,13 +119,13 @@
               <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
               <span>{{ formatCount(work.digg_count) }}</span>
             </div>
-            <div class="action-item">
+            <div class="action-item" @click.stop="openComments(work)">
               <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               <span>{{ formatCount(work.comment_count) }}</span>
             </div>
             <div class="action-item">
-              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-              <span>{{ formatCount(work.share_count) }}</span>
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+              <span>{{ formatCount(work.collect_count) }}</span>
             </div>
           </div>
 
@@ -127,6 +143,71 @@
         </div>
       </template>
     </div>
+
+    <!-- 评论面板（仿抖音） -->
+    <div v-if="commentPanelOpen" class="comment-overlay" @click.self="closeComments">
+      <div class="comment-panel" :class="{ open: commentPanelOpen }">
+        <div class="comment-panel-header">
+          <span class="comment-panel-count">{{ commentTotal }} 条评论</span>
+          <button class="comment-panel-close" @click="closeComments">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="comment-list" v-if="!loadingComments && commentTree.length > 0">
+          <div v-for="comment in commentTree" :key="comment.comment_id" class="comment-item">
+            <img
+              v-if="comment.user_avatar"
+              :src="comment.user_avatar"
+              class="comment-avatar"
+              @error="(e: any) => e.target.style.display = 'none'"
+            />
+            <div v-else class="comment-avatar-placeholder">{{ (comment.user_nickname || '?')[0] }}</div>
+            <div class="comment-body">
+              <div class="comment-nickname">{{ comment.user_nickname || '匿名' }}
+                <span v-if="comment.ip_label" class="comment-ip">{{ comment.ip_label }}</span>
+              </div>
+              <div class="comment-content">{{ comment.content }}</div>
+              <div class="comment-meta">
+                <span class="comment-time">{{ formatTime(comment.create_time) }}</span>
+                <span v-if="comment.digg_count" class="comment-likes">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                  {{ comment.digg_count }}
+                </span>
+              </div>
+              <!-- 子评论 -->
+              <div v-if="comment.children && comment.children.length > 0" class="comment-replies">
+                <div v-for="reply in comment.children" :key="reply.comment_id" class="reply-item">
+                  <img
+                    v-if="reply.user_avatar"
+                    :src="reply.user_avatar"
+                    class="reply-avatar"
+                    @error="(e: any) => e.target.style.display = 'none'"
+                  />
+                  <div v-else class="reply-avatar-placeholder">{{ (reply.user_nickname || '?')[0] }}</div>
+                  <div class="reply-body">
+                    <div class="comment-nickname">{{ reply.user_nickname || '匿名' }}
+                      <span v-if="reply.ip_label" class="comment-ip">{{ reply.ip_label }}</span>
+                    </div>
+                    <div class="comment-content">{{ reply.content }}</div>
+                    <div class="comment-meta">
+                      <span class="comment-time">{{ formatTime(reply.create_time) }}</span>
+                      <span v-if="reply.digg_count" class="comment-likes">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                        {{ reply.digg_count }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="loadingComments" class="comment-loading">
+          <div class="loading-spinner"></div>
+        </div>
+        <div v-else class="comment-empty">暂无评论</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -140,10 +221,18 @@ const loadingWorks = ref(false)
 const users = ref<any[]>([])
 const searchQuery = ref('')
 const selectedUser = ref<any>(null)
+const selectedUserDetail = ref<any>(null)
+const userStats = ref<Record<string, any>>({})
 const works = ref<any[]>([])
 const page = ref(1)
 const hasMore = ref(true)
 const panelOpen = ref(false)
+
+// 评论面板
+const commentPanelOpen = ref(false)
+const commentTree = ref<any[]>([])
+const commentTotal = ref(0)
+const loadingComments = ref(false)
 
 const feedRef = ref<HTMLDivElement | null>(null)
 const sentinelRef = ref<HTMLDivElement | null>(null)
@@ -169,12 +258,21 @@ async function loadUsers() {
   loadingUsers.value = false
 }
 
-function selectUser(user: any) {
+async function selectUser(user: any) {
   selectedUser.value = user
   panelOpen.value = false
   works.value = []
   page.value = 1
   hasMore.value = true
+  selectedUserDetail.value = null
+
+  // 获取用户详细统计
+  try {
+    const detail: any = await client.get(`/users/${user.sec_user_id}`)
+    selectedUserDetail.value = detail.scrape_status || null
+    userStats.value[user.sec_user_id] = detail.scrape_status || {}
+  } catch { /* ignore */ }
+
   loadWorks()
 }
 
@@ -186,7 +284,6 @@ async function loadWorks() {
     const res: any = await client.get('/works', {
       params: {
         sec_user_id: selectedUser.value.sec_user_id,
-        type: 'video',
         page: page.value,
         size: 20,
       },
@@ -287,6 +384,27 @@ async function loadVideoUrl(work: any) {
   work._loaded = true
 }
 
+// --- 评论面板 ---
+async function openComments(work: any) {
+  commentPanelOpen.value = true
+  commentTree.value = []
+  commentTotal.value = 0
+  loadingComments.value = true
+  try {
+    const res: any = await client.get(`/works/${work.aweme_id}/comments`, {
+      params: { size: 500 },
+    })
+    commentTree.value = res.items || []
+    commentTotal.value = res.total || 0
+  } catch { /* handled by interceptor */ }
+  loadingComments.value = false
+}
+
+function closeComments() {
+  commentPanelOpen.value = false
+  commentTree.value = []
+}
+
 // --- 播放控制 ---
 function togglePlay(e: Event) {
   const card = (e.target as HTMLElement).closest('.feed-card')
@@ -300,12 +418,28 @@ function togglePlay(e: Event) {
   }
 }
 
-// --- 格式化数字 ---
+// --- 格式化 ---
 function formatCount(n: number | undefined): string {
   if (!n) return '0'
   if (n >= 10000) return (n / 10000).toFixed(1) + 'w'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
   return String(n)
+}
+
+function formatTime(t: string | undefined): string {
+  if (!t) return ''
+  try {
+    const d = new Date(t)
+    const now = new Date()
+    const diff = now.getTime() - d.getTime()
+    if (diff < 60000) return '刚刚'
+    if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前'
+    if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
+    if (diff < 2592000000) return Math.floor(diff / 86400000) + '天前'
+    return d.toLocaleDateString('zh-CN')
+  } catch {
+    return ''
+  }
 }
 
 // --- 生命周期 ---
@@ -454,6 +588,30 @@ watch(sentinelRef, (el) => {
   padding: 24px 0;
 }
 
+/* ===== 用户统计栏 ===== */
+.user-stats-bar {
+  display: flex;
+  justify-content: space-around;
+  padding: 12px 8px;
+  border-top: 1px solid #2a2a2a;
+  background: #1a1a1a;
+}
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.stat-num {
+  font-size: 15px;
+  font-weight: 700;
+  color: #10b981;
+}
+.stat-label {
+  font-size: 11px;
+  color: #666;
+}
+
 /* ===== 移动端浮动按钮 ===== */
 .fab-avatar {
   display: none;
@@ -579,6 +737,7 @@ watch(sentinelRef, (el) => {
   gap: 4px;
   color: #fff;
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));
+  cursor: pointer;
 }
 .action-item span {
   font-size: 12px;
@@ -618,6 +777,183 @@ watch(sentinelRef, (el) => {
 .end-hint {
   color: #444;
   font-size: 13px;
+}
+
+/* ===== 评论面板（仿抖音） ===== */
+.comment-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.comment-panel {
+  width: 100%;
+  max-width: 500px;
+  max-height: 70vh;
+  background: #1e1e1e;
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.comment-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+.comment-panel-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ddd;
+}
+.comment-panel-close {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.comment-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.comment-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.comment-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.comment-avatar-placeholder {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.comment-body {
+  flex: 1;
+  min-width: 0;
+}
+.comment-nickname {
+  font-size: 13px;
+  font-weight: 500;
+  color: #888;
+  margin-bottom: 4px;
+}
+.comment-ip {
+  font-size: 11px;
+  color: #555;
+  margin-left: 6px;
+}
+.comment-content {
+  font-size: 14px;
+  color: #eee;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #555;
+}
+.comment-likes {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.comment-time {
+  color: #555;
+}
+
+/* 子评论 */
+.comment-replies {
+  margin-top: 10px;
+  padding-left: 4px;
+  border-left: 2px solid #2a2a2a;
+}
+.reply-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 8px 8px;
+}
+.reply-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.reply-avatar-placeholder {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #888;
+  flex-shrink: 0;
+}
+.reply-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+.comment-empty {
+  text-align: center;
+  color: #555;
+  font-size: 14px;
+  padding: 40px 0;
+}
+
+/* 评论列表自定义滚动条 */
+.comment-list::-webkit-scrollbar {
+  width: 4px;
+}
+.comment-list::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+.comment-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ===== 响应式 - 移动端 ===== */
@@ -661,6 +997,11 @@ watch(sentinelRef, (el) => {
     left: 8px;
     bottom: 30px;
     right: 60px;
+  }
+
+  .comment-panel {
+    max-width: 100%;
+    max-height: 65vh;
   }
 }
 

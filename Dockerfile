@@ -10,14 +10,13 @@ COPY frontend/ ./
 RUN npm run build
 
 # ============================================
-# Stage 2: Python runtime (backend + frontend)
+# Stage 2: Python runtime (backend)
 # ============================================
 FROM python:3.13-slim
 
-# System dependencies: Chromium for Playwright, ffmpeg for whisper
+# System dependencies: Chromium for Playwright, ffmpeg for whisper, curl for healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    # Playwright Chromium dependencies
+    ffmpeg curl \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
     libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
@@ -34,15 +33,18 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Copy backend code
 COPY backend/ ./backend/
 
-# Copy frontend dist from build stage
+# Copy frontend dist（供本地 run.sh 模式使用 + entrypoint 复制到 shared volume）
 COPY --from=frontend-build /build/dist ./frontend/dist
 
-# Data volume for DB, media, browser data, logs
+# Data volume
 VOLUME /app/data
 
-# Headless mode in container
 ENV HEADLESS=true
 
 EXPOSE 8000 8001
 
+# Entrypoint: 如果 /shared/html 目录存在（mounted volume），把 dist 复制过去供 Nginx 使用
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "backend.main"]
