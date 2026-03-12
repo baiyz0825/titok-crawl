@@ -1,9 +1,13 @@
+import base64
 import json
 import logging
+import random
+import re
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
 from backend.config import settings
 from backend.scraper.anti_detect import apply_stealth
+from backend.scraper.slider_captcha import detect_slider_captcha, solve_slider_captcha
 from backend.db.database import db
 from backend.db.models import Session
 from backend.db import crud
@@ -172,30 +176,57 @@ class ScraperEngine:
     async def detect_captcha(self, page: Page) -> bool:
         """Check if a CAPTCHA/verification is shown on the page."""
         try:
+            # Use specific selectors to avoid false positives.
+            # Douyin captcha containers are typically full-screen overlays
+            # with specific class patterns.
             captcha = await page.query_selector(
                 ", ".join([
-                    "[class*='captcha']",
-                    "[class*='verify']",
-                    "[class*='secsdk']",
                     "#captcha_container",
+                    ".captcha-verify-container",
                     ".secsdk-captcha-drag-icon",
-                    "[class*='captcha-verify']",
-                    "div[id*='captcha']",
-                    "[class*='slider']",
+                    "[class*='captcha-verify'][class*='container']",
+                    "[class*='secsdk-captcha']",
+                    "div.captcha_verify_container",
+                    "#secsdk-captcha-drag-wrapper",
                 ])
             )
-            is_active = captcha is not None
-            if is_active and not self._captcha_active:
+            if captcha is None:
+                if self._captcha_active:
+                    logger.info("CAPTCHA element no longer found on page")
+                self._captcha_active = False
+                return False
+
+            # Extra check: the captcha element must be visible
+            is_visible = await captcha.is_visible()
+            if not is_visible:
+                self._captcha_active = False
+                return False
+
+            if not self._captcha_active:
                 logger.warning("CAPTCHA detected! Please solve it manually in the browser.")
-            self._captcha_active = is_active
-            return is_active
+            self._captcha_active = True
+            return True
         except Exception:
             return False
 
     async def wait_for_captcha_resolve(self, page: Page, timeout: int = 180) -> bool:
-        """Wait for captcha to be resolved, returns True if resolved."""
+        """Wait for captcha to be resolved, returns True if resolved.
+
+        First attempts automatic slider solving, then falls back to
+        waiting for manual resolution.
+        """
         if not await self.detect_captcha(page):
             return True
+
+        # Try automatic slider captcha solving first
+        if await detect_slider_captcha(page):
+            logger.info("Attempting automatic slider captcha solve...")
+            solved = await solve_slider_captcha(page, max_retries=3)
+            if solved:
+                logger.info("Slider captcha auto-solved!")
+                self._captcha_active = False
+                return True
+            logger.warning("Auto-solve failed, falling back to manual resolution")
 
         logger.warning(f"Waiting for CAPTCHA resolution (timeout: {timeout}s)...")
         for i in range(timeout):
@@ -215,11 +246,16 @@ class ScraperEngine:
         """Navigate to URL and handle captcha if it appears.
         Returns True if page loaded successfully (captcha resolved or not present).
         """
+        # Random pre-navigation delay to mimic human behavior
+        pre_delay = random.uniform(1.0, 3.0)
+        await page.wait_for_timeout(int(pre_delay * 1000))
+
         kwargs.setdefault("wait_until", "domcontentloaded")
         await page.goto(url, **kwargs)
 
-        # Brief wait for captcha to potentially appear
-        await page.wait_for_timeout(2000)
+        # Randomized post-navigation wait
+        post_delay = random.uniform(1.5, 3.0)
+        await page.wait_for_timeout(int(post_delay * 1000))
 
         if await self.detect_captcha(page):
             resolved = await self.wait_for_captcha_resolve(page)
@@ -273,6 +309,41 @@ class ScraperEngine:
                 if c["name"] == "sessionid" and c.get("value") and len(c["value"]) > 10:
                     return True
             return False
+
+    async def screenshot_page(self, page: Page) -> str:
+        """截图返回 base64 data URI (JPEG)"""
+        buf = await page.screenshot(type="jpeg", quality=60)
+        b64 = base64.b64encode(buf).decode()
+        return f"data:image/jpeg;base64,{b64}"
+
+    async def detect_verify_code_input(self, page: Page) -> dict | None:
+        """检测验证码输入框，返回 {"phone": "138****1234"} 或 None"""
+        el = await page.query_selector(
+            "input[placeholder*='验证码'], input[placeholder*='请输入']"
+        )
+        if el is None or not await el.is_visible():
+            return None
+        # 提取页面上的手机号文本（如 138****1234）
+        text = await page.inner_text("body")
+        m = re.search(r"1[3-9]\d\*{4}\d{4}", text)
+        phone = m.group(0) if m else ""
+        return {"phone": phone}
+
+    async def fill_verify_code(self, page: Page, code: str) -> bool:
+        """填入验证码并点击确认按钮"""
+        inp = await page.query_selector(
+            "input[placeholder*='验证码'], input[placeholder*='请输入']"
+        )
+        if inp is None:
+            return False
+        await inp.fill(code)
+        # 点击包含 验证/确认/登录 文字的按钮
+        btn = await page.query_selector(
+            "button:has-text('验证'), button:has-text('确认'), button:has-text('登录')"
+        )
+        if btn:
+            await btn.click()
+        return True
 
     @property
     def context(self) -> BrowserContext:
