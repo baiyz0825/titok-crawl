@@ -60,7 +60,7 @@
       </div>
 
       <el-table :data="schedules" v-loading="loading" style="width: 100%">
-        <el-table-column prop="id" label="#" width="56" />
+        <el-table-column prop="id" label="#" width="56" class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
         <el-table-column label="用户" min-width="200">
           <template #default="{ row }">
             <div>
@@ -74,7 +74,7 @@
             <el-tag size="small" round>{{ ({ all: '全部', profile: '资料', works: '作品' } as Record<string,string>)[row.sync_type] || row.sync_type }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="间隔" width="90">
+        <el-table-column label="间隔" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">{{ formatInterval(row.interval_minutes) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="70">
@@ -82,10 +82,10 @@
             <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" size="small" />
           </template>
         </el-table-column>
-        <el-table-column label="上次执行" width="110">
+        <el-table-column label="上次执行" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }"><span class="text-muted">{{ row.last_run_at ? row.last_run_at.slice(5,16).replace('T',' ') : '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="下次执行" width="110">
+        <el-table-column label="下次执行" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }"><span class="text-muted">{{ row.next_run_at ? row.next_run_at.slice(5,16).replace('T',' ') : '-' }}</span></template>
         </el-table-column>
         <el-table-column label="操作" width="72">
@@ -187,7 +187,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page { padding: 28px 32px; max-width: 1400px; }
+.page { padding: 28px 32px; }
 .page-header { margin-bottom: 24px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
@@ -212,4 +212,9 @@ onMounted(() => {
 .user-option-info { display: flex; flex-direction: column; min-width: 0; }
 .user-option-name { font-size: 13px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-option-id { font-size: 11px; color: #94a3b8; }
+
+@media (max-width: 768px) {
+  .form-grid { grid-template-columns: 1fr; }
+  :deep(.col-hide-mobile) { display: none !important; }
+}
 </style>

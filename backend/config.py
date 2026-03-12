@@ -13,14 +13,17 @@ class Settings:
     MEDIA_DIR = DATA_DIR / "media"
 
     # Playwright browser
-    HEADLESS = False
+    HEADLESS = os.environ.get("HEADLESS", "false").lower() in ("true", "1", "yes")
     BROWSER_DATA_DIR = DATA_DIR / "browser"
 
     # Request control
-    MIN_DELAY = 2.0
-    MAX_DELAY = 5.0
+    MIN_DELAY = 3.0
+    MAX_DELAY = 6.0
     MAX_RETRIES = 3
     REQUEST_TIMEOUT = 30
+
+    # Log file
+    LOG_FILE = DATA_DIR / "logs" / "app.jsonl"
 
     # Task queue
     MAX_CONCURRENT_TASKS = 1
@@ -40,6 +43,7 @@ class Settings:
         cls.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         cls.MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         cls.BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        cls.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

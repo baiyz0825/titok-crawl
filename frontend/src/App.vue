@@ -1,6 +1,18 @@
 <template>
   <div class="layout">
-    <aside class="sidebar">
+    <!-- 移动端汉堡按钮 (预览页隐藏) -->
+    <button v-if="route.path !== '/preview'" class="hamburger" @click="sidebarOpen = true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+
+    <!-- 移动端遮罩 -->
+    <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
+
+    <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-header">
         <div class="logo">
           <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -19,6 +31,7 @@
           :to="item.path"
           class="nav-item"
           :class="{ active: route.path === item.path }"
+          @click="sidebarOpen = false"
         >
           <el-icon :size="18"><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
@@ -30,17 +43,19 @@
       </div>
     </aside>
 
-    <main class="main-content">
+    <main class="main-content" :class="{ 'preview-mode': route.path === '/preview' }">
       <router-view />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, User, VideoCamera, List, Key, Search, Timer, Document } from '@element-plus/icons-vue'
+import { Odometer, User, VideoCamera, List, Key, Search, Timer, Document, VideoPlay } from '@element-plus/icons-vue'
 
 const route = useRoute()
+const sidebarOpen = ref(false)
 
 const menuItems = [
   { path: '/dashboard', label: '概览', icon: Odometer },
@@ -51,6 +66,7 @@ const menuItems = [
   { path: '/schedules', label: '定时任务', icon: Timer },
   { path: '/logs', label: '日志', icon: Document },
   { path: '/sessions', label: '登录', icon: Key },
+  { path: '/preview', label: '预览', icon: VideoPlay },
 ]
 </script>
 
@@ -64,6 +80,25 @@ const menuItems = [
   display: flex;
   height: 100vh;
   overflow: hidden;
+}
+
+.hamburger {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 1001;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  color: #334155;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+}
+
+.sidebar-overlay {
+  display: none;
 }
 
 .sidebar {
@@ -154,5 +189,44 @@ const menuItems = [
   background: #f8fafc;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.main-content.preview-mode {
+  background: #0f0f0f;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .hamburger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    box-shadow: 4px 0 12px rgb(0 0 0 / 0.1);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .main-content {
+    width: 100%;
+  }
 }
 </style>

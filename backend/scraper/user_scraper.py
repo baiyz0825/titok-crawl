@@ -93,6 +93,12 @@ class UserScraper:
                 delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
                 await asyncio.sleep(delay)
 
+                # Longer pause every 3-5 pages to mimic human behavior
+                if page_count > 0 and page_count % random.randint(3, 5) == 0:
+                    long_pause = random.uniform(5, 10)
+                    logger.debug(f"Anti-detection long pause: {long_pause:.1f}s")
+                    await asyncio.sleep(long_pause)
+
                 # Check for captcha before scrolling
                 if await engine.detect_captcha(page):
                     resolved = await engine.wait_for_captcha_resolve(page)

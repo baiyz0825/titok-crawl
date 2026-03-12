@@ -1,0 +1,15 @@
+{
+  "name": "抖音采集器",
+  "short_name": "采集器",
+  "start_url": "/preview",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#10b981",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

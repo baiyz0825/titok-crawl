@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS comments (
     content TEXT,
     digg_count INTEGER DEFAULT 0,
     reply_count INTEGER DEFAULT 0,
+    reply_to TEXT,
     create_time TIMESTAMP,
     ip_label TEXT,
     extra_data TEXT,
@@ -131,6 +132,21 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(_CREATE_TABLES_SQL)
         await self._conn.commit()
+        # Migrations for existing databases
+        await self._migrate()
+
+    async def _migrate(self):
+        """Run safe ALTER TABLE migrations for existing databases."""
+        migrations = [
+            ("comments", "reply_to", "ALTER TABLE comments ADD COLUMN reply_to TEXT"),
+            ("works", "transcript", "ALTER TABLE works ADD COLUMN transcript TEXT"),
+        ]
+        for table, column, sql in migrations:
+            cursor = await self._conn.execute(f"PRAGMA table_info({table})")
+            columns = [row[1] for row in await cursor.fetchall()]
+            if column not in columns:
+                await self._conn.execute(sql)
+                await self._conn.commit()
 
     async def close(self):
         if self._conn:

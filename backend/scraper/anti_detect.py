@@ -225,6 +225,34 @@ _STEALTH_SCRIPTS = [
         return origAppendChild.call(this, child);
     };
     """,
+
+    # 17. Override document.hasFocus() to always return true
+    """
+    Document.prototype.hasFocus = function() { return true; };
+    """,
+
+    # 18. Random mouse/keyboard micro-movements to simulate real user
+    """
+    (function() {
+        let lastMove = Date.now();
+        function randomMouseMove() {
+            if (Date.now() - lastMove < 3000) return;
+            lastMove = Date.now();
+            const x = Math.floor(Math.random() * window.innerWidth);
+            const y = Math.floor(Math.random() * window.innerHeight);
+            document.dispatchEvent(new MouseEvent('mousemove', {
+                clientX: x, clientY: y, bubbles: true
+            }));
+        }
+        setInterval(randomMouseMove, Math.floor(5000 + Math.random() * 10000));
+    })();
+    """,
+
+    # 19. Override visibility state to always appear visible
+    """
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+    Object.defineProperty(document, 'hidden', { get: () => false });
+    """,
 ]
 
 

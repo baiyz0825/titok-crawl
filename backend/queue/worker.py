@@ -6,6 +6,7 @@ from backend.scraper.user_scraper import UserScraper
 from backend.scraper.search_scraper import SearchScraper
 from backend.scraper.media_downloader import MediaDownloader
 from backend.scraper.comment_scraper import CommentScraper
+from backend.scraper.speech_recognizer import SpeechRecognizer
 from backend.db import crud
 from backend.queue.progress import progress_manager
 
@@ -20,6 +21,7 @@ class TaskWorker:
         self.search_scraper = SearchScraper()
         self.media_downloader = MediaDownloader()
         self.comment_scraper = CommentScraper()
+        self.speech_recognizer = SpeechRecognizer()
 
     async def execute(self, task_id: int, task_type: str, target: str, params: str | None) -> dict:
         """Execute a task and return result summary."""
@@ -39,6 +41,8 @@ class TaskWorker:
             return await self._scrape_comments(task_id, target, parsed_params)
         elif task_type == "work_info":
             return await self._refresh_work_info(task_id, target, parsed_params)
+        elif task_type == "speech_recognition":
+            return await self._speech_recognize(task_id, target, parsed_params)
         else:
             raise ValueError(f"Unknown task type: {task_type}")
 
@@ -194,3 +198,32 @@ class TaskWorker:
                 return {"aweme_id": aweme_id, "error": "No detail data intercepted"}
         finally:
             await interceptor.teardown()
+
+    async def _speech_recognize(self, task_id: int, aweme_id: str, params: dict) -> dict:
+        """Recognize speech from a downloaded video."""
+        progress_manager.update(task_id, 0.1, "查找视频文件", aweme_id)
+
+        # Find the local video file
+        media_files = await crud.get_media_files(aweme_id)
+        video_path = None
+        for mf in media_files:
+            if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
+                from pathlib import Path
+                if Path(mf.local_path).exists():
+                    video_path = mf.local_path
+                    break
+
+        if not video_path:
+            progress_manager.update(task_id, 1.0, "完成", "未找到本地视频文件")
+            return {"aweme_id": aweme_id, "error": "No local video file found"}
+
+        progress_manager.update(task_id, 0.3, "语音识别中", aweme_id)
+        text = await self.speech_recognizer.recognize(video_path)
+
+        if text:
+            await crud.update_work_transcript(aweme_id, text)
+            progress_manager.update(task_id, 1.0, "完成", f"识别 {len(text)} 字")
+            return {"aweme_id": aweme_id, "transcript_length": len(text)}
+        else:
+            progress_manager.update(task_id, 1.0, "完成", "未识别到语音")
+            return {"aweme_id": aweme_id, "transcript": None}

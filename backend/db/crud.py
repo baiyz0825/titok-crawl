@@ -131,20 +131,17 @@ async def get_work(aweme_id: str) -> Work | None:
     return Work(**dict(row))
 
 
-async def get_works(
-    sec_user_id: str | None = None,
-    work_type: str | None = None,
-    page: int = 1,
-    size: int = 20,
-    sort_by: str = "publish_time",
-    sort_order: str = "DESC",
-) -> list[Work]:
-    allowed_sort_by = {"publish_time", "digg_count", "play_count", "comment_count", "collect_count", "created_at"}
-    if sort_by not in allowed_sort_by:
-        sort_by = "publish_time"
-    if sort_order.upper() not in ("ASC", "DESC"):
-        sort_order = "DESC"
-    conditions = []
+def _build_filter_conditions(
+    sec_user_id: str | None,
+    work_type: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    has_comments: bool | None,
+    has_media: bool | None,
+    has_transcript: bool | None,
+) -> tuple[list[str], list]:
+    """Build shared WHERE conditions for get_works / count_works."""
+    conditions: list[str] = []
     params: list = []
     if sec_user_id:
         conditions.append("sec_user_id = ?")
@@ -152,6 +149,48 @@ async def get_works(
     if work_type:
         conditions.append("type = ?")
         params.append(work_type)
+    if start_date:
+        conditions.append("publish_time >= ?")
+        params.append(start_date)
+    if end_date:
+        conditions.append("publish_time <= ?")
+        params.append(end_date + " 23:59:59")
+    if has_transcript is True:
+        conditions.append("transcript IS NOT NULL AND transcript != ''")
+    elif has_transcript is False:
+        conditions.append("(transcript IS NULL OR transcript = '')")
+    if has_comments is True:
+        conditions.append("EXISTS (SELECT 1 FROM comments WHERE comments.aweme_id = works.aweme_id)")
+    elif has_comments is False:
+        conditions.append("NOT EXISTS (SELECT 1 FROM comments WHERE comments.aweme_id = works.aweme_id)")
+    if has_media is True:
+        conditions.append("EXISTS (SELECT 1 FROM media_files WHERE media_files.aweme_id = works.aweme_id AND download_status = 'completed')")
+    elif has_media is False:
+        conditions.append("NOT EXISTS (SELECT 1 FROM media_files WHERE media_files.aweme_id = works.aweme_id AND download_status = 'completed')")
+    return conditions, params
+
+
+async def get_works(
+    sec_user_id: str | None = None,
+    work_type: str | None = None,
+    page: int = 1,
+    size: int = 20,
+    sort_by: str = "publish_time",
+    sort_order: str = "DESC",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    has_comments: bool | None = None,
+    has_media: bool | None = None,
+    has_transcript: bool | None = None,
+) -> list[Work]:
+    allowed_sort_by = {"publish_time", "digg_count", "play_count", "comment_count", "collect_count", "created_at"}
+    if sort_by not in allowed_sort_by:
+        sort_by = "publish_time"
+    if sort_order.upper() not in ("ASC", "DESC"):
+        sort_order = "DESC"
+    conditions, params = _build_filter_conditions(
+        sec_user_id, work_type, start_date, end_date, has_comments, has_media, has_transcript,
+    )
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     offset = (page - 1) * size
     cursor = await db.conn.execute(
@@ -162,15 +201,18 @@ async def get_works(
     return [Work(**dict(r)) for r in rows]
 
 
-async def count_works(sec_user_id: str | None = None, work_type: str | None = None) -> int:
-    conditions = []
-    params: list = []
-    if sec_user_id:
-        conditions.append("sec_user_id = ?")
-        params.append(sec_user_id)
-    if work_type:
-        conditions.append("type = ?")
-        params.append(work_type)
+async def count_works(
+    sec_user_id: str | None = None,
+    work_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    has_comments: bool | None = None,
+    has_media: bool | None = None,
+    has_transcript: bool | None = None,
+) -> int:
+    conditions, params = _build_filter_conditions(
+        sec_user_id, work_type, start_date, end_date, has_comments, has_media, has_transcript,
+    )
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     cursor = await db.conn.execute(f"SELECT COUNT(*) FROM works{where}", params)
     row = await cursor.fetchone()
@@ -189,6 +231,16 @@ async def delete_works_batch(aweme_ids: list[str]):
     """Delete multiple works."""
     for aid in aweme_ids:
         await delete_work(aid)
+
+
+async def update_work_transcript(aweme_id: str, transcript: str):
+    """Update the transcript field for a work."""
+    now = datetime.now().isoformat()
+    await db.conn.execute(
+        "UPDATE works SET transcript = ?, updated_at = ? WHERE aweme_id = ?",
+        (transcript, now, aweme_id),
+    )
+    await db.conn.commit()
 
 
 # ── Media Files ──
@@ -344,15 +396,16 @@ async def get_session(name: str) -> Session | None:
 async def upsert_comment(comment: Comment) -> int:
     await db.conn.execute(
         """INSERT INTO comments (comment_id, aweme_id, user_nickname, user_sec_uid,
-            user_avatar, content, digg_count, reply_count, create_time, ip_label, extra_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            user_avatar, content, digg_count, reply_count, reply_to, create_time, ip_label, extra_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(comment_id) DO UPDATE SET
             digg_count=excluded.digg_count,
             reply_count=excluded.reply_count,
-            content=excluded.content""",
+            content=excluded.content,
+            reply_to=excluded.reply_to""",
         (comment.comment_id, comment.aweme_id, comment.user_nickname,
          comment.user_sec_uid, comment.user_avatar, comment.content,
-         comment.digg_count, comment.reply_count, comment.create_time,
+         comment.digg_count, comment.reply_count, comment.reply_to, comment.create_time,
          comment.ip_label, comment.extra_data),
     )
     await db.conn.commit()

@@ -12,6 +12,7 @@ const router = createRouter({
     { path: '/schedules', name: 'Schedules', component: () => import('../views/Schedules.vue') },
     { path: '/logs', name: 'Logs', component: () => import('../views/Logs.vue') },
     { path: '/sessions', name: 'Sessions', component: () => import('../views/Sessions.vue') },
+    { path: '/preview', name: 'Preview', component: () => import('../views/Preview.vue') },
   ],
 })
 

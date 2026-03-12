@@ -39,19 +39,19 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="粉丝" width="90">
+        <el-table-column label="粉丝" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">{{ formatCount(row.follower_count) }}</template>
         </el-table-column>
-        <el-table-column label="获赞" width="90">
+        <el-table-column label="获赞" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">{{ formatCount(row.total_favorited) }}</template>
         </el-table-column>
-        <el-table-column prop="aweme_count" label="作品" width="70" />
-        <el-table-column label="更新时间" width="110">
+        <el-table-column prop="aweme_count" label="作品" width="70" class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column label="更新时间" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <span class="text-muted">{{ row.updated_at ? row.updated_at.slice(5,16).replace('T',' ') : '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right" class-name="col-action" label-class-name="col-action">
           <template #default="{ row }">
             <div class="action-btns">
               <el-button size="small" @click="viewDetail(row)">详情</el-button>
@@ -272,7 +272,7 @@ onMounted(fetchUsers)
 </script>
 
 <style scoped>
-.page { padding: 28px 32px; max-width: 1400px; }
+.page { padding: 28px 32px; }
 .page-header { margin-bottom: 24px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
@@ -329,4 +329,16 @@ onMounted(fetchUsers)
 .rescrape-item-info { font-size: 12px; color: #059669; }
 .rescrape-item-info.none { color: #94a3b8; }
 .rescrape-loading { min-height: 60px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 13px; }
+
+@media (max-width: 768px) {
+  .form-row { flex-direction: column; }
+  .form-row .el-input { width: 100% !important; }
+  .table-toolbar { flex-direction: column; align-items: flex-start; }
+  .toolbar-left { flex-wrap: wrap; width: 100%; }
+  .toolbar-left .el-input { width: 100% !important; }
+  .toolbar-right { width: 100%; justify-content: flex-end; }
+  .action-btns { flex-wrap: wrap; gap: 2px; }
+  :deep(.col-hide-mobile) { display: none !important; }
+  :deep(.col-action) { width: 100px !important; min-width: 100px !important; }
+}
 </style>

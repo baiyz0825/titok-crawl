@@ -26,7 +26,7 @@
 
       <el-table :data="tasks" v-loading="loading" @selection-change="(val: any[]) => selectedTasks = val" style="width: 100%">
         <el-table-column type="selection" width="44" />
-        <el-table-column prop="id" label="#" width="56" />
+        <el-table-column prop="id" label="#" width="56" class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
         <el-table-column prop="task_type" label="类型" width="110">
           <template #default="{ row }">
             <el-tag size="small" round>{{ typeLabel(row.task_type) }}</el-tag>
@@ -37,7 +37,7 @@
             <span class="status-badge" :class="'status-' + row.status">{{ statusLabel(row.status) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="进度" width="200">
+        <el-table-column label="进度" width="200" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <div v-if="row.status === 'running' && progressMap[row.id]" class="progress-cell">
               <el-progress :percentage="Math.round(progressMap[row.id].progress * 100)" :stroke-width="6" :show-text="false" />
@@ -47,17 +47,17 @@
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="target" label="目标" min-width="160" show-overflow-tooltip />
-        <el-table-column label="错误" min-width="120" show-overflow-tooltip>
+        <el-table-column prop="target" label="目标" min-width="160" show-overflow-tooltip class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column label="错误" min-width="120" show-overflow-tooltip class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <span v-if="row.error_message" style="color: #ef4444; font-size: 12px">{{ row.error_message }}</span>
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" width="110">
+        <el-table-column prop="created_at" label="创建时间" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }"><span class="text-muted">{{ formatDate(row.created_at) }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right" class-name="col-action" label-class-name="col-action">
           <template #default="{ row }">
             <div class="action-btns">
               <el-button v-if="row.status === 'pending'" size="small" type="warning" plain @click="prioritize(row.id)">插队</el-button>
@@ -149,7 +149,7 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 </script>
 
 <style scoped>
-.page { padding: 28px 32px; max-width: 1400px; }
+.page { padding: 28px 32px; }
 .page-header { margin-bottom: 24px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
@@ -176,4 +176,13 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 
 .progress-cell { display: flex; flex-direction: column; gap: 2px; }
 .progress-text { font-size: 11px; color: #64748b; }
+
+@media (max-width: 768px) {
+  .table-toolbar { flex-direction: column; align-items: flex-start; }
+  .toolbar-left { flex-wrap: wrap; width: 100%; }
+  .toolbar-right { width: 100%; justify-content: flex-end; }
+  .action-btns { gap: 2px; }
+  :deep(.col-hide-mobile) { display: none !important; }
+  :deep(.col-action) { width: 120px !important; min-width: 120px !important; }
+}
 </style>

@@ -19,13 +19,23 @@ async def list_works(
     size: int = 20,
     sort_by: str = "publish_time",
     sort_order: str = "DESC",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    has_comments: bool | None = None,
+    has_media: bool | None = None,
+    has_transcript: bool | None = None,
 ):
     """List works with optional filters and sorting."""
+    filter_kwargs = dict(
+        sec_user_id=sec_user_id, work_type=type,
+        start_date=start_date, end_date=end_date,
+        has_comments=has_comments, has_media=has_media, has_transcript=has_transcript,
+    )
     works = await crud.get_works(
-        sec_user_id=sec_user_id, work_type=type, page=page, size=size,
+        **filter_kwargs, page=page, size=size,
         sort_by=sort_by, sort_order=sort_order,
     )
-    total = await crud.count_works(sec_user_id=sec_user_id, work_type=type)
+    total = await crud.count_works(**filter_kwargs)
     return {
         "items": [w.model_dump() for w in works],
         "total": total,
@@ -42,13 +52,16 @@ async def delete_works_batch(req: BatchDeleteWorksRequest):
 
 @router.get("/{aweme_id}")
 async def get_work(aweme_id: str):
-    """Get work detail with media files and comments."""
+    """Get work detail with media files and comments (tree structure)."""
     work = await crud.get_work(aweme_id)
     if work is None:
         raise HTTPException(status_code=404, detail="Work not found")
     media = await crud.get_media_files(aweme_id)
-    comments = await crud.get_comments(aweme_id, page=1, size=50)
+    comments = await crud.get_comments(aweme_id, page=1, size=200)
     comment_total = await crud.count_comments(aweme_id)
+
+    # Build comment tree
+    comment_tree = _build_comment_tree([c.model_dump() for c in comments])
 
     # Scrape status
     has_comments = comment_total > 0
@@ -58,7 +71,7 @@ async def get_work(aweme_id: str):
     return {
         **work.model_dump(),
         "media_files": [m.model_dump() for m in media],
-        "comments": [c.model_dump() for c in comments],
+        "comments": comment_tree,
         "comment_total": comment_total,
         "scrape_status": {
             "profile_scraped": True,
@@ -71,19 +84,51 @@ async def get_work(aweme_id: str):
     }
 
 
+def _build_comment_tree(comments: list[dict]) -> list[dict]:
+    """Build a tree structure from flat comment list."""
+    by_id = {}
+    roots = []
+    for c in comments:
+        c["children"] = []
+        by_id[c["comment_id"]] = c
+
+    for c in comments:
+        parent_id = c.get("reply_to")
+        if parent_id and parent_id in by_id:
+            by_id[parent_id]["children"].append(c)
+        else:
+            roots.append(c)
+
+    return roots
+
+
 @router.delete("/{aweme_id}")
 async def delete_work(aweme_id: str):
     await crud.delete_work(aweme_id)
     return {"deleted": True}
 
 
+@router.post("/{aweme_id}/recognize")
+async def recognize_speech(aweme_id: str):
+    """Manually trigger speech recognition for a video work."""
+    work = await crud.get_work(aweme_id)
+    if work is None:
+        raise HTTPException(status_code=404, detail="Work not found")
+    if work.type != "video":
+        raise HTTPException(status_code=400, detail="Speech recognition only works for video type")
+
+    task_id = await scheduler.submit("speech_recognition", aweme_id)
+    return {"task_id": task_id}
+
+
 @router.get("/{aweme_id}/comments")
-async def get_work_comments(aweme_id: str, page: int = 1, size: int = 50):
-    """Get comments for a work."""
+async def get_work_comments(aweme_id: str, page: int = 1, size: int = 200):
+    """Get comments for a work (tree structure)."""
     comments = await crud.get_comments(aweme_id, page=page, size=size)
     total = await crud.count_comments(aweme_id)
+    comment_tree = _build_comment_tree([c.model_dump() for c in comments])
     return {
-        "items": [c.model_dump() for c in comments],
+        "items": comment_tree,
         "total": total,
         "page": page,
         "size": size,

@@ -34,10 +34,18 @@ async def log_stream(level: str | None = None):
 
 
 @router.get("/recent")
-async def recent_logs(count: int = 100, level: str | None = None):
-    """Get recent log entries."""
-    entries = log_stream_handler.get_recent(count)
-    if level:
-        level_upper = level.upper()
-        entries = [e for e in entries if e["level"] == level_upper]
+async def recent_logs(
+    count: int = 100,
+    level: str | None = None,
+    source: str = "memory",
+    offset: int = 0,
+):
+    """Get recent log entries. source=memory (default) or source=file for history."""
+    if source == "file":
+        entries = log_stream_handler.read_history(count=count, offset=offset, level=level)
+    else:
+        entries = log_stream_handler.get_recent(count)
+        if level:
+            level_upper = level.upper()
+            entries = [e for e in entries if e["level"] == level_upper]
     return {"items": entries, "total": len(entries)}

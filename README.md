@@ -19,6 +19,7 @@
 - Python 3.11+
 - Node.js 18+
 - macOS / Linux
+- ffmpeg（语音识别需要，macOS: `brew install ffmpeg`）
 
 ### 安装
 
@@ -77,12 +78,14 @@ cd frontend && npm run dev
 |------|------|
 | 用户采集 | 通过用户名/抖音号/sec_user_id 采集用户资料 |
 | 作品采集 | 采集用户的视频/图文作品列表及互动数据 |
-| 评论采集 | 采集指定作品的评论数据 |
+| 评论采集 | 采集指定作品的评论数据，支持回复评论翻页采集 |
 | 媒体下载 | 下载视频文件、封面图、图文图片到本地 |
+| 语音识别 | 视频下载后自动识别语音转文字，支持手动触发 |
 | 搜索发现 | 从抖音搜索用户，支持本地优先匹配 |
 | 定时任务 | 配置自动定期同步用户数据 |
 | 任务队列 | 异步任务管理，支持优先级/暂停/重试 |
-| 反检测 | 16 项浏览器指纹伪装，验证码自动检测与手动处理 |
+| 反检测 | 19 项浏览器指纹伪装，验证码自动检测与手动处理 |
+| 历史日志 | 日志持久化到文件，支持重启后加载历史记录 |
 
 ---
 
@@ -137,8 +140,9 @@ cd frontend && npm run dev
 - 图文类型支持轮播查看
 - 作品简介
 - 互动数据：点赞、评论、分享、收藏、播放
+- 语音文案：视频类型作品支持识别语音转文字，已识别的文案可折叠展开查看，未识别的可点击「识别文案」手动触发
 - 采集状态：显示作品信息/评论/媒体各项的采集状况
-- 评论列表：展示已采集的评论内容
+- 评论列表：展示已采集的评论内容（支持完整的评论树结构，包括所有子回复）
 
 **重新采集（多选）：**
 
@@ -172,6 +176,7 @@ cd frontend && npm run dev
 | comments | 采集指定作品的评论 |
 | media_download | 下载指定作品的媒体文件 |
 | work_info | 刷新指定作品的互动数据 |
+| speech_recognition | 识别视频语音转文字 |
 | search | 搜索用户/作品 |
 
 ### 定时任务（Schedules）
@@ -193,7 +198,9 @@ cd frontend && npm run dev
 
 实时查看后端运行日志，便于排查问题。
 - 日志通过 SSE 实时推送
+- 支持按级别筛选（INFO/WARNING/ERROR/DEBUG）
 - 支持暂停/继续、清除日志
+- 点击「历史日志」可加载服务重启前的历史记录（日志持久化至 `data/logs/app.jsonl`）
 
 ### 登录管理（Sessions）
 
@@ -226,7 +233,7 @@ Dashboard 页面会显示当前是否处于验证码状态。
 
 ### 采集速度慢？
 
-为避免触发反爬，每次请求之间有 2~5 秒随机延迟（`MIN_DELAY` / `MAX_DELAY`），且任务串行执行。可在 `backend/config.py` 中调整，但过快会增加被封风险。
+为避免触发反爬，每次请求之间有 3~6 秒随机延迟（`MIN_DELAY` / `MAX_DELAY`），且任务串行执行。可在 `backend/config.py` 中调整，但过快会增加被封风险。
 
 ### 数据存储在哪？
 
@@ -237,6 +244,7 @@ data/
 │   └── {sec_user_id}/
 │       ├── videos/       # 视频文件
 │       └── notes/        # 图文图片
+├── logs/app.jsonl        # 持久化日志文件（JSON Lines 格式）
 └── browser/              # Playwright 浏览器数据（Cookie 等）
 ```
 
@@ -263,8 +271,9 @@ data/
 **技术栈：**
 - 前端：Vue 3 + TypeScript + Element Plus + Vite
 - 后端：FastAPI + aiosqlite + Pydantic
-- 采集：Playwright + 自定义反检测（16 项指纹伪装）
+- 采集：Playwright + 自定义反检测（19 项指纹伪装）
 - 数据拦截：`page.route()` 拦截抖音 API 响应（无需逆向签名算法）
+- 语音识别：faster-whisper（base 模型，CPU int8）+ ffmpeg
 - 任务队列：asyncio + SQLite（轻量，无需 Redis）
 - MCP Server：SSE 协议，供 AI 客户端调用
 
@@ -273,5 +282,7 @@ data/
 - Chrome 运行时模拟
 - Canvas/WebGL/AudioContext 指纹噪声
 - UA Client Hints 伪装
-- 随机请求延迟
+- 随机请求延迟 + 导航前后随机等待
+- 每 3~5 页自动长暂停（5~10 秒）
+- 鼠标微动作模拟、document.hasFocus/visibilityState 伪装
 - 验证码自动检测 + 手动处理

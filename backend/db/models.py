@@ -38,6 +38,7 @@ class Work(BaseModel):
     hashtags: str | None = None  # JSON array string
     music_title: str | None = None
     publish_time: datetime | None = None
+    transcript: str | None = None
     extra_data: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -92,6 +93,7 @@ class Comment(BaseModel):
     content: str | None = None
     digg_count: int = 0
     reply_count: int = 0
+    reply_to: str | None = None  # parent comment_id, null for top-level
     create_time: datetime | None = None
     ip_label: str | None = None
     extra_data: str | None = None

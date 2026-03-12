@@ -14,6 +14,8 @@ echo -e "${GREEN}=== 抖音采集器 ===${NC}"
 # Activate venv
 if [ -d ".venv" ]; then
     source .venv/bin/activate
+    # Sync dependencies on every start
+    pip install -r requirements.txt -q 2>/dev/null
 else
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv .venv

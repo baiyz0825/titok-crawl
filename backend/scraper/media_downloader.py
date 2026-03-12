@@ -86,6 +86,16 @@ class MediaDownloader:
                 file_id, download_status="completed", file_size=file_size
             )
             logger.info(f"Downloaded video: {aweme_id} ({file_size} bytes)")
+
+            # Auto-trigger speech recognition if no transcript yet
+            work = await crud.get_work(aweme_id)
+            if work and not work.transcript:
+                try:
+                    from backend.queue.scheduler import scheduler
+                    await scheduler.submit("speech_recognition", aweme_id)
+                    logger.info(f"Queued speech recognition for {aweme_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to queue speech recognition: {e}")
         else:
             await crud.update_media_file(
                 file_id, download_status="failed", retry_count=1

@@ -91,7 +91,7 @@ onMounted(() => { fetchOverview(); fetchLoginStatus() })
 </script>
 
 <style scoped>
-.page { padding: 28px 32px; max-width: 1200px; }
+.page { padding: 28px 32px; }
 .page-header { margin-bottom: 28px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
@@ -149,4 +149,16 @@ onMounted(() => { fetchOverview(); fetchLoginStatus() })
 .login-indicator.offline .login-dot { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2); }
 .login-link { color: #10b981; font-size: 14px; text-decoration: none; font-weight: 500; }
 .login-link:hover { color: #059669; }
+
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stat-card { padding: 14px; gap: 10px; }
+  .stat-icon { width: 40px; height: 40px; }
+  .stat-value { font-size: 22px; }
+  .content-grid { grid-template-columns: 1fr; gap: 12px; }
+  .card { padding: 16px; }
+}
+@media (min-width: 769px) and (max-width: 1024px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
 </style>

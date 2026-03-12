@@ -13,6 +13,26 @@
             <el-option label="视频" value="video" />
             <el-option label="图文" value="note" />
           </el-select>
+          <el-date-picker
+            v-model="filters.dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            style="width: 240px"
+            clearable
+            @change="fetchWorks"
+          />
+          <el-select v-model="filters.scrapeStatus" clearable placeholder="采集状态" style="width: 140px" @change="fetchWorks">
+            <el-option label="全部" value="" />
+            <el-option label="已采集评论" value="has_comments" />
+            <el-option label="未采集评论" value="no_comments" />
+            <el-option label="已下载媒体" value="has_media" />
+            <el-option label="未下载媒体" value="no_media" />
+            <el-option label="已识别文案" value="has_transcript" />
+            <el-option label="未识别文案" value="no_transcript" />
+          </el-select>
           <div class="sort-group">
             <el-select v-model="sortBy" style="width: 120px" @change="fetchWorks">
               <el-option label="发布时间" value="publish_time" />
@@ -51,23 +71,23 @@
           </template>
         </el-table-column>
         <el-table-column prop="title" label="描述" min-width="220" show-overflow-tooltip />
-        <el-table-column label="类型" width="72">
+        <el-table-column label="类型" width="72" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <el-tag :type="row.type === 'video' ? '' : 'success'" size="small" round>
               {{ row.type === 'video' ? '视频' : '图文' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="digg_count" label="点赞" width="80" sortable />
-        <el-table-column prop="comment_count" label="评论" width="80" sortable />
-        <el-table-column prop="collect_count" label="收藏" width="80" sortable />
-        <el-table-column prop="play_count" label="播放" width="80" sortable />
-        <el-table-column prop="publish_time" label="发布时间" width="110">
+        <el-table-column prop="digg_count" label="点赞" width="80" sortable class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column prop="comment_count" label="评论" width="80" sortable class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column prop="collect_count" label="收藏" width="80" sortable class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column prop="play_count" label="播放" width="80" sortable class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column prop="publish_time" label="发布时间" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <span class="text-muted">{{ formatDate(row.publish_time) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right" class-name="col-action" label-class-name="col-action">
           <template #default="{ row }">
             <div class="action-btns" @click.stop>
               <el-button size="small" type="primary" plain @click="openRescrape(row)">重新采集</el-button>
@@ -94,7 +114,7 @@
 
     <!-- Work Detail Dialog (centered) -->
     <el-dialog v-model="drawerVisible" :title="detail?.title || '作品详情'" width="600px" align-center>
-      <div v-if="detail" class="detail-content">
+      <div v-if="detail" class="detail-content" style="max-height: 70vh; overflow-y: auto;">
         <!-- Media -->
         <div class="media-section">
           <template v-if="detail.type === 'video'">
@@ -105,6 +125,21 @@
               </div>
               <p class="text-muted" style="text-align:center;margin-top:8px">视频未下载到本地</p>
             </template>
+            <!-- Transcript / Speech Recognition -->
+            <div class="transcript-section">
+              <div v-if="detail.transcript" class="transcript-block">
+                <div class="transcript-header" @click="transcriptExpanded = !transcriptExpanded">
+                  <span class="transcript-label">文案</span>
+                  <el-icon><component :is="transcriptExpanded ? 'ArrowUp' : 'ArrowDown'" /></el-icon>
+                </div>
+                <div v-show="transcriptExpanded" class="transcript-text">{{ detail.transcript }}</div>
+              </div>
+              <div v-else class="transcript-action">
+                <el-button size="small" :loading="recognizing" @click="recognizeSpeech">
+                  {{ recognizing ? '识别中...' : '识别文案' }}
+                </el-button>
+              </div>
+            </div>
           </template>
           <template v-else-if="detail.type === 'note' && imageUrls.length">
             <el-carousel :autoplay="false" height="320px" indicator-position="outside">
@@ -166,17 +201,49 @@
             <h4>评论 ({{ detail.comment_total || 0 }})</h4>
           </div>
           <div v-if="!detail.comments?.length" class="empty-hint">暂无评论数据</div>
-          <div v-for="c in detail.comments" :key="c.comment_id" class="comment-item">
-            <el-avatar :src="c.user_avatar" :size="32">{{ (c.user_nickname||'?')[0] }}</el-avatar>
-            <div class="comment-body">
-              <div class="comment-author">
-                {{ c.user_nickname }}
-                <span v-if="c.ip_label" class="comment-ip">{{ c.ip_label }}</span>
+          <template v-for="c in detail.comments" :key="c.comment_id">
+            <div class="comment-item">
+              <el-avatar :src="c.user_avatar" :size="32">{{ (c.user_nickname||'?')[0] }}</el-avatar>
+              <div class="comment-body">
+                <div class="comment-author">
+                  {{ c.user_nickname }}
+                  <span v-if="c.ip_label" class="comment-ip">{{ c.ip_label }}</span>
+                </div>
+                <div class="comment-text">{{ c.content }}</div>
+                <div class="comment-meta">{{ c.create_time }} · 👍 {{ c.digg_count }} · 回复 {{ c.reply_count }}</div>
               </div>
-              <div class="comment-text">{{ c.content }}</div>
-              <div class="comment-meta">{{ c.create_time }} · 👍 {{ c.digg_count }} · 回复 {{ c.reply_count }}</div>
             </div>
-          </div>
+            <!-- 子评论 (replies) -->
+            <div v-if="c.children?.length" class="comment-replies">
+              <template v-for="r in c.children" :key="r.comment_id">
+                <div class="comment-item reply-item">
+                  <el-avatar :src="r.user_avatar" :size="24">{{ (r.user_nickname||'?')[0] }}</el-avatar>
+                  <div class="comment-body">
+                    <div class="comment-author">
+                      {{ r.user_nickname }}
+                      <span v-if="r.ip_label" class="comment-ip">{{ r.ip_label }}</span>
+                    </div>
+                    <div class="comment-text">{{ r.content }}</div>
+                    <div class="comment-meta">{{ r.create_time }} · 👍 {{ r.digg_count }}</div>
+                  </div>
+                </div>
+                <!-- 二级子评论 -->
+                <div v-if="r.children?.length" class="comment-replies nested">
+                  <div v-for="rr in r.children" :key="rr.comment_id" class="comment-item reply-item">
+                    <el-avatar :src="rr.user_avatar" :size="22">{{ (rr.user_nickname||'?')[0] }}</el-avatar>
+                    <div class="comment-body">
+                      <div class="comment-author">
+                        {{ rr.user_nickname }}
+                        <span v-if="rr.ip_label" class="comment-ip">{{ rr.ip_label }}</span>
+                      </div>
+                      <div class="comment-text">{{ rr.content }}</div>
+                      <div class="comment-meta">{{ rr.create_time }} · 👍 {{ rr.digg_count }}</div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
         </div>
       </div>
     </el-dialog>
@@ -222,7 +289,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '../api/client'
 
@@ -231,7 +298,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
-const filters = reactive({ sec_user_id: '', type: '' })
+const filters = reactive({ sec_user_id: '', type: '', dateRange: null as string[] | null, scrapeStatus: '' })
 const sortBy = ref('publish_time')
 const sortOrder = ref('DESC')
 const selectedWorks = ref<any[]>([])
@@ -241,6 +308,18 @@ const showRescrapeDialog = ref(false)
 const rescrapeSyncTypes = ref<string[]>(['comments'])
 const rescrapeTarget = ref<any>(null)
 const rescrapeStatus = ref<any>(null)
+const transcriptExpanded = ref(false)
+const recognizing = ref(false)
+let recognizePollTimer: ReturnType<typeof setInterval> | null = null
+
+// Clean up polling when detail dialog closes
+watch(drawerVisible, (visible) => {
+  if (!visible && recognizePollTimer) {
+    clearInterval(recognizePollTimer)
+    recognizePollTimer = null
+    recognizing.value = false
+  }
+})
 
 const rescrapeStatusItems = computed(() => {
   const s = rescrapeStatus.value
@@ -282,6 +361,22 @@ async function fetchWorks() {
   const params: any = { page: page.value, size: pageSize, sort_by: sortBy.value, sort_order: sortOrder.value }
   if (filters.sec_user_id) params.sec_user_id = filters.sec_user_id
   if (filters.type) params.type = filters.type
+  if (filters.dateRange && filters.dateRange.length === 2) {
+    params.start_date = filters.dateRange[0]
+    params.end_date = filters.dateRange[1]
+  }
+  if (filters.scrapeStatus) {
+    const statusMap: Record<string, Record<string, boolean>> = {
+      has_comments: { has_comments: true },
+      no_comments: { has_comments: false },
+      has_media: { has_media: true },
+      no_media: { has_media: false },
+      has_transcript: { has_transcript: true },
+      no_transcript: { has_transcript: false },
+    }
+    const mapped = statusMap[filters.scrapeStatus]
+    if (mapped) Object.assign(params, mapped)
+  }
   const res: any = await client.get('/works', { params })
   works.value = res.items
   total.value = res.total
@@ -291,6 +386,8 @@ async function fetchWorks() {
 async function openDetail(row: any) {
   const res: any = await client.get(`/works/${row.aweme_id}`)
   detail.value = res
+  transcriptExpanded.value = !!res.transcript
+  recognizing.value = false
   drawerVisible.value = true
 }
 
@@ -327,11 +424,39 @@ async function doRescrape() {
   showRescrapeDialog.value = false
 }
 
+async function recognizeSpeech() {
+  if (!detail.value) return
+  recognizing.value = true
+  try {
+    await client.post(`/works/${detail.value.aweme_id}/recognize`)
+    ElMessage.success('语音识别任务已提交，请稍后刷新查看')
+    // Poll for result
+    let attempts = 0
+    recognizePollTimer = setInterval(async () => {
+      attempts++
+      if (attempts > 30) { clearInterval(recognizePollTimer!); recognizePollTimer = null; recognizing.value = false; return }
+      try {
+        const res: any = await client.get(`/works/${detail.value.aweme_id}`)
+        if (res.transcript) {
+          detail.value.transcript = res.transcript
+          transcriptExpanded.value = true
+          recognizing.value = false
+          clearInterval(recognizePollTimer!)
+          recognizePollTimer = null
+        }
+      } catch { /* ignore */ }
+    }, 3000)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '识别失败')
+    recognizing.value = false
+  }
+}
+
 onMounted(fetchWorks)
 </script>
 
 <style scoped>
-.page { padding: 28px 32px; max-width: 1400px; }
+.page { padding: 28px 32px; }
 .page-header { margin-bottom: 24px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
@@ -358,6 +483,17 @@ onMounted(fetchWorks)
 .media-cover-wrapper { display: flex; justify-content: center; background: #f8fafc; border-radius: 12px; padding: 8px; }
 .media-cover { max-width: 100%; max-height: 280px; border-radius: 8px; }
 .carousel-img-wrapper { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #f8fafc; border-radius: 8px; }
+
+.transcript-section { margin-top: 12px; margin-bottom: 4px; }
+.transcript-block { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; overflow: hidden; }
+.transcript-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+}
+.transcript-header:hover { background: #dcfce7; }
+.transcript-label { font-size: 13px; font-weight: 600; color: #166534; }
+.transcript-text { padding: 0 14px 12px; font-size: 13px; color: #334155; line-height: 1.7; white-space: pre-wrap; }
+.transcript-action { text-align: center; padding: 4px 0; }
 
 .desc-block {
   padding: 14px 16px; background: #f8fafc; border-radius: 10px;
@@ -405,6 +541,11 @@ onMounted(fetchWorks)
 .comment-ip { color: #94a3b8; font-weight: 400; margin-left: 8px; font-size: 12px; }
 .comment-text { margin-top: 4px; font-size: 14px; color: #475569; }
 .comment-meta { margin-top: 6px; font-size: 12px; color: #94a3b8; }
+.comment-replies { padding-left: 42px; border-left: 2px solid #e8f5e9; margin-left: 16px; }
+.comment-replies.nested { padding-left: 34px; margin-left: 12px; }
+.reply-item { padding: 8px 0; }
+.reply-item .comment-text { font-size: 13px; }
+.reply-item .comment-author { font-size: 12px; }
 
 /* Rescrape dialog */
 .rescrape-content {}
@@ -426,4 +567,24 @@ onMounted(fetchWorks)
 .rescrape-item-info { font-size: 12px; color: #059669; }
 .rescrape-item-info.none { color: #94a3b8; }
 .rescrape-loading { min-height: 60px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 13px; }
+
+@media (max-width: 768px) {
+  .table-toolbar { flex-direction: column; align-items: flex-start; }
+  .toolbar-left { flex-wrap: wrap; width: 100%; }
+  .toolbar-left .el-input { width: 100% !important; }
+  .toolbar-left .el-select { width: 100% !important; }
+  .toolbar-right { width: 100%; justify-content: flex-end; }
+  .sort-group { width: 100%; }
+  .sort-group .el-select { flex: 1; width: auto !important; }
+  .cover-thumb { width: 48px; height: 48px; }
+  .cover-placeholder { width: 48px; height: 48px; }
+  .stats-row { flex-wrap: wrap; }
+  .mini-stat { min-width: 33%; }
+  .mini-val { font-size: 15px; }
+  .comment-replies { padding-left: 24px; margin-left: 8px; }
+  .comment-replies.nested { padding-left: 16px; margin-left: 8px; }
+  .action-btns { flex-direction: column; gap: 2px; }
+  :deep(.col-hide-mobile) { display: none !important; }
+  :deep(.col-action) { width: 80px !important; min-width: 80px !important; }
+}
 </style>

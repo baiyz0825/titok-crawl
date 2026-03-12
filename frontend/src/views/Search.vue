@@ -46,18 +46,18 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="粉丝" width="100">
+        <el-table-column label="粉丝" width="100" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">{{ formatCount(row.follower_count) }}</template>
         </el-table-column>
-        <el-table-column label="获赞" width="100">
+        <el-table-column label="获赞" width="100" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">{{ formatCount(row.total_favorited) }}</template>
         </el-table-column>
-        <el-table-column label="签名" min-width="200" show-overflow-tooltip>
+        <el-table-column label="签名" min-width="200" show-overflow-tooltip class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <span class="text-muted">{{ row.signature || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="80">
+        <el-table-column label="来源" width="80" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <el-tag :type="row.source === 'local' ? 'success' : 'warning'" size="small" round>
               {{ row.source === 'local' ? '本地' : '抖音' }}
@@ -166,7 +166,7 @@ async function doScrape() {
 </script>
 
 <style scoped>
-.page { padding: 28px 32px; max-width: 1400px; }
+.page { padding: 28px 32px; }
 .page-header { margin-bottom: 24px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
@@ -187,4 +187,12 @@ async function doScrape() {
 .collect-label { font-size: 14px; font-weight: 600; color: #334155; margin-bottom: 10px; display: inline-block; }
 .collect-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .collect-grid .el-checkbox { margin-right: 0 !important; }
+
+@media (max-width: 768px) {
+  .search-bar { flex-direction: column; }
+  .search-bar .el-input { max-width: 100% !important; width: 100% !important; }
+  .search-bar .el-button { width: 100%; }
+  .toolbar-left { flex-wrap: wrap; }
+  :deep(.col-hide-mobile) { display: none !important; }
+}
 </style>

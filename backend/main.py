@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
@@ -68,6 +68,19 @@ app.include_router(api_router)
 # Serve downloaded media files
 settings.MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(settings.MEDIA_DIR)), name="media")
+
+# Serve frontend static files in production (when frontend/dist exists)
+_frontend_dist = settings.BASE_DIR / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="frontend-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        """Fallback: serve index.html for SPA routing."""
+        file_path = _frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_frontend_dist / "index.html"))
 
 
 @app.exception_handler(Exception)

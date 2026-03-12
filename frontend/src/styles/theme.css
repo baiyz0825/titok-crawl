@@ -229,3 +229,47 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .page {
+    padding: 56px 12px 16px !important;
+  }
+  .page-header h1 {
+    font-size: 20px !important;
+  }
+  .page-header {
+    margin-bottom: 12px !important;
+  }
+  /* Card 内容适配 */
+  .card {
+    padding: 14px !important;
+    border-radius: 10px !important;
+  }
+  /* 表格横向滚动 */
+  .el-table {
+    font-size: 13px !important;
+  }
+  /* Dialog 移动端全宽 */
+  .el-dialog {
+    width: 92% !important;
+    max-width: 92% !important;
+    margin: 8px auto !important;
+  }
+  /* 分页器紧凑 */
+  .el-pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  /* 按钮紧凑 */
+  .el-button--small {
+    padding: 5px 8px !important;
+    font-size: 12px !important;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .page {
+    padding: 24px 20px !important;
+  }
+}
