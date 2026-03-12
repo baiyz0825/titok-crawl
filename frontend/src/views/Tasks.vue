@@ -110,7 +110,6 @@
               :loading="userSearchLoading"
               placeholder="搜索或选择用户"
               style="flex: 1"
-              @focus="onUserSelectFocus"
             >
               <el-option
                 v-for="u in userOptions"
@@ -139,16 +138,16 @@
           </div>
         </el-form-item>
 
-        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites'].includes(form.task_type)" label="最大页数">
-          <el-input-number v-model="form.max_pages" :min="1" :max="50" placeholder="不限制" style="width: 100%" />
-        </el-form-item>
-
-        <el-form-item v-if="['user_likes', 'user_favorites'].includes(form.task_type)" label="最大数量">
+        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites'].includes(form.task_type)" label="最大采集数量">
           <el-input-number v-model="form.max_count" :min="1" :max="1000" placeholder="不限制" style="width: 100%" />
+          <span style="font-size: 12px; color: #94a3b8; margin-top: 4px; display: block;">留空则采集全部</span>
         </el-form-item>
 
-        <el-form-item v-if="form.task_type === 'user_all'" label="下载媒体">
-          <el-switch v-model="form.download_media" />
+        <el-form-item v-if="['user_works', 'user_all'].includes(form.task_type)" label="采集选项">
+          <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox value="download_media" label="下载媒体文件（封面图/视频/图文图片）" />
+            <el-checkbox value="scrape_comments" label="采集评论数据" />
+          </el-checkbox-group>
         </el-form-item>
       </el-form>
 
@@ -184,7 +183,7 @@ const form = ref({
   target: '',
   max_pages: undefined,
   max_count: undefined,
-  download_media: false
+  sync_types: [] as string[]
 })
 const userOptions = ref<any[]>([])
 const userSearchLoading = ref(false)
@@ -237,7 +236,7 @@ async function batchDelete() {
 }
 
 // 创建任务相关方法
-async function searchUsers(query: string) {
+async function searchUsers(query: string = '') {
   userSearchLoading.value = true
   try {
     const params: any = { size: 20 }
@@ -250,13 +249,6 @@ async function searchUsers(query: string) {
     userOptions.value = []
   }
   userSearchLoading.value = false
-}
-
-async function onUserSelectFocus() {
-  // 当没有搜索词时，加载最近更新的 20 个用户
-  if (!form.value.target && userOptions.value.length === 0) {
-    await searchUsers('')
-  }
 }
 
 async function createTask() {
@@ -273,7 +265,14 @@ async function createTask() {
     }
     if (form.value.max_pages) params.max_pages = form.value.max_pages
     if (form.value.max_count) params.max_count = form.value.max_count
-    if (form.value.download_media) params.download_media = form.value.download_media
+
+    // 处理采集选项
+    if (form.value.sync_types.includes('download_media')) {
+      params.download_media = true
+    }
+    if (form.value.sync_types.includes('scrape_comments')) {
+      params.scrape_comments = true
+    }
 
     await client.post('/tasks', params)
     ElMessage.success('任务已创建')
@@ -292,9 +291,8 @@ function resetForm() {
     target: '',
     max_pages: undefined,
     max_count: undefined,
-    download_media: false
+    sync_types: []
   }
-  userOptions.value = []
 }
 
 async function selectCurrentUser() {
@@ -320,7 +318,12 @@ function startProgressSSE() {
   eventSource.onmessage = (event) => { progressMap.value[JSON.parse(event.data).task_id] = JSON.parse(event.data) }
 }
 
-onMounted(() => { fetchTasks(); refreshTimer = setInterval(fetchTasks, 5000); startProgressSSE() })
+onMounted(async () => {
+  await fetchTasks()
+  await searchUsers('') // 初始加载用户列表
+  refreshTimer = setInterval(fetchTasks, 5000)
+  startProgressSSE()
+})
 onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 </script>
 

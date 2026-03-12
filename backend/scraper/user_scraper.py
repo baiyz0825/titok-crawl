@@ -154,11 +154,18 @@ class UserScraper:
             await self.interceptor.teardown()
 
     async def scrape_works(
-        self, sec_user_id: str, max_pages: int | None = None,
+        self, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None,
     ) -> list[Work]:
-        """Scrape user's works list with pagination."""
-        logger.info(f"Starting scrape_works for {sec_user_id}, max_pages={max_pages}")
+        """Scrape user's works list with pagination.
+
+        Args:
+            sec_user_id: User ID to scrape
+            max_pages: Maximum number of pages to scrape (deprecated, use max_count)
+            max_count: Maximum number of works to scrape
+            on_page: Callback function(page_num, total_pages) for progress tracking
+        """
+        logger.info(f"Starting scrape_works for {sec_user_id}, max_pages={max_pages}, max_count={max_count}")
         page = await engine.get_page()
         self.interceptor.clear()
         await self.interceptor.setup(page)
@@ -202,6 +209,11 @@ class UserScraper:
             if on_page:
                 on_page(page_count, effective_max)
             while has_more:
+                # Check max_count limit
+                if max_count and len(all_works) >= max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
+                    break
+
                 if max_pages and page_count >= max_pages:
                     break
 
@@ -239,6 +251,11 @@ class UserScraper:
                 logger.info(f"Page {page_count}: got {len(works)} works (total: {len(all_works)})")
                 if on_page:
                     on_page(page_count, effective_max)
+
+            # Trim to max_count if specified
+            if max_count and len(all_works) > max_count:
+                logger.info(f"Trimming works from {len(all_works)} to {max_count}")
+                all_works = all_works[:max_count]
 
             logger.info(f"Scraped {len(all_works)} works for {sec_user_id[:20]}...")
             return all_works

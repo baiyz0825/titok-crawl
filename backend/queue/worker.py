@@ -59,13 +59,14 @@ class TaskWorker:
         return {"error": "User not found"}
 
     async def _scrape_works(self, task_id: int, sec_user_id: str, params: dict) -> dict:
-        max_pages = params.get("max_pages")
-        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_pages={max_pages}")
+        max_count = params.get("max_count")
+        scrape_comments = params.get("scrape_comments", False)
+        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}")
         progress_manager.update(task_id, 0.05, "开始采集作品", f"用户 {sec_user_id}")
 
         # Wrap scrape_works to track page progress
         works = await self.user_scraper.scrape_works(
-            sec_user_id, max_pages=max_pages,
+            sec_user_id, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
@@ -82,10 +83,30 @@ class TaskWorker:
                 logger.info(f"[Task {task_id}] Upserted {i + 1}/{len(works)} works")
 
         progress_manager.update(task_id, 0.95, "保存数据", f"共 {len(works)} 个作品")
-        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品")
-        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted")
+
+        # Scrape comments if requested
+        comments_count = 0
+        if scrape_comments and works:
+            logger.info(f"[Task {task_id}] Starting comment scraping for {len(works)} works")
+            progress_manager.update(task_id, 0.96, "采集评论", f"准备采集 {len(works)} 个作品的评论")
+            for i, work in enumerate(works):
+                try:
+                    comments = await self.comment_scraper.scrape_comments(
+                        work.aweme_id, max_pages=3, on_page=None
+                    )
+                    # Save comments
+                    for comment in comments:
+                        await crud.upsert_comment(comment)
+                    comments_count += len(comments)
+                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
+        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品" + (f", {comments_count} 条评论" if comments_count else ""))
+        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {comments_count} comments scraped")
         return {
             "count": len(works),
+            "comments_count": comments_count,
             "types": {
                 "video": sum(1 for w in works if w.type == "video"),
                 "note": sum(1 for w in works if w.type == "note"),
@@ -97,9 +118,10 @@ class TaskWorker:
         user = await self.user_scraper.scrape_profile(sec_user_id)
 
         progress_manager.update(task_id, 0.2, "采集作品列表", sec_user_id)
-        max_pages = params.get("max_pages")
+        max_count = params.get("max_count")
+        scrape_comments = params.get("scrape_comments", False)
         works = await self.user_scraper.scrape_works(
-            sec_user_id, max_pages=max_pages,
+            sec_user_id, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.2 + 0.4 * page_num / max(total, 1), 0.6),
@@ -112,6 +134,7 @@ class TaskWorker:
         for work in works:
             await crud.upsert_work(work)
 
+        # Download media if requested
         download_count = 0
         if params.get("download_media", False) and works:
             for i, work in enumerate(works):
@@ -126,11 +149,27 @@ class TaskWorker:
                 )
                 download_count += 1
 
+        # Scrape comments if requested
+        comments_count = 0
+        if scrape_comments and works:
+            progress_manager.update(task_id, 0.96, "采集评论", f"准备采集 {len(works)} 个作品的评论")
+            for i, work in enumerate(works):
+                try:
+                    comments = await self.comment_scraper.scrape_comments(
+                        work.aweme_id, max_pages=3, on_page=None
+                    )
+                    for comment in comments:
+                        await crud.upsert_comment(comment)
+                    comments_count += len(comments)
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
         progress_manager.update(task_id, 1.0, "完成", "")
         return {
             "nickname": user.nickname if user else None,
             "works_count": len(works),
             "media_downloaded": download_count,
+            "comments_count": comments_count,
         }
 
     async def _search(self, task_id: int, keyword: str, params: dict) -> dict:
