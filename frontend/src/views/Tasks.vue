@@ -38,13 +38,32 @@
             <span class="status-badge" :class="'status-' + row.status">{{ statusLabel(row.status) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="进度" width="200" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
+        <el-table-column label="进度" width="220" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <div v-if="row.status === 'running' && progressMap[row.id]" class="progress-cell">
               <el-progress :percentage="Math.round(progressMap[row.id].progress * 100)" :stroke-width="6" :show-text="false" />
-              <span class="progress-text">{{ progressMap[row.id].step }}</span>
+              <div class="progress-detail">
+                <span class="progress-text">{{ progressMap[row.id].step }}</span>
+                <span v-if="progressMap[row.id].target" class="progress-target">{{ progressMap[row.id].target }}</span>
+              </div>
             </div>
-            <el-progress v-else-if="row.status === 'completed'" :percentage="100" status="success" :stroke-width="6" :show-text="false" />
+            <div v-else-if="row.status === 'completed'" class="completed-cell">
+              <el-icon color="#10b981" :size="16"><SuccessFilled /></el-icon>
+              <span style="margin-left: 6px; font-size: 13px; color: #10b981;">完成</span>
+              <span v-if="row.result" class="completed-result">{{ formatTaskResult(row.result) }}</span>
+            </div>
+            <div v-else-if="row.status === 'failed'" class="failed-cell">
+              <el-icon color="#ef4444" :size="16"><CircleCloseFilled /></el-icon>
+              <span style="margin-left: 6px; font-size: 13px; color: #ef4444;">失败</span>
+            </div>
+            <div v-else-if="row.status === 'pending'" class="pending-cell">
+              <el-icon color="#94a3b8" :size="16"><Clock /></el-icon>
+              <span style="margin-left: 6px; font-size: 13px; color: #94a3b8;">等待中</span>
+            </div>
+            <div v-else-if="row.status === 'paused'" class="paused-cell">
+              <el-icon color="#f59e0b" :size="16"><VideoPause /></el-icon>
+              <span style="margin-left: 6px; font-size: 13px; color: #f59e0b;">已暂停</span>
+            </div>
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
@@ -182,6 +201,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { SuccessFilled, CircleCloseFilled, Clock, VideoPause } from '@element-plus/icons-vue'
 import client from '../api/client'
 
 const tasks = ref<any[]>([])
@@ -231,6 +251,18 @@ function statusLabel(s: string) {
 }
 
 function formatDate(d: string) { return d ? d.slice(5, 16).replace('T', ' ') : '-' }
+
+function formatTaskResult(result: any) {
+  if (!result) return ''
+  const parts = []
+  if (result.count !== undefined) parts.push(`${result.count} 个作品`)
+  if (result.works_count !== undefined) parts.push(`${result.works_count} 个作品`)
+  if (result.comments_count > 0) parts.push(`${result.comments_count} 条评论`)
+  if (result.refreshed_count > 0) parts.push(`刷新 ${result.refreshed_count}`)
+  if (result.media_downloaded > 0) parts.push(`下载 ${result.media_downloaded}`)
+  if (result.total !== undefined && result.total > 0) parts.push(`${result.total} 个用户`)
+  return parts.length > 0 ? `（${parts.join('，')}）` : ''
+}
 
 async function fetchTasks() {
   loading.value = true
@@ -390,6 +422,13 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 .status-running { background: #fffbeb; color: #d97706; }
 .status-paused { background: #f1f5f9; color: #64748b; }
 .status-completed { background: #ecfdf5; color: #059669; }
+
+.progress-cell { display: flex; flex-direction: column; gap: 4px; }
+.progress-detail { display: flex; justify-content: space-between; align-items: center; }
+.progress-text { font-size: 12px; color: #64748b; }
+.progress-target { font-size: 11px; color: #94a3b8; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.completed-cell, .failed-cell, .pending-cell, .paused-cell { display: flex; align-items: center; }
+.completed-result { font-size: 12px; color: #10b981; margin-left: 8px; }
 .status-failed { background: #fef2f2; color: #dc2626; }
 .status-cancelled { background: #f1f5f9; color: #94a3b8; }
 
