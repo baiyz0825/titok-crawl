@@ -166,9 +166,9 @@
 
         <el-form-item v-if="['user_works', 'user_all'].includes(form.task_type)" label="采集选项">
           <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
-            <el-checkbox label="refresh_info">更新作品信息（简介、点赞、播放、收藏等）</el-checkbox>
-            <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
-            <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
+            <el-checkbox value="refresh_info" label="更新作品信息（简介、点赞、播放、收藏等）" />
+            <el-checkbox value="scrape_comments" label="采集评论数据" />
+            <el-checkbox value="download_media" label="下载媒体文件（封面图/视频/图文图片）" />
           </el-checkbox-group>
         </el-form-item>
 
