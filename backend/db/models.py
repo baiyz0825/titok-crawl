@@ -112,6 +112,13 @@ class Schedule(BaseModel):
     created_at: datetime | None = None
 
 
+class Favorite(BaseModel):
+    id: int | None = None
+    aweme_id: str
+    sec_user_id: str | None = None
+    created_at: datetime | None = None
+
+
 # API request/response schemas
 
 class ScrapeOptions(BaseModel):

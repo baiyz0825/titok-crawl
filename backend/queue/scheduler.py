@@ -172,6 +172,8 @@ class TaskScheduler:
                         "profile": "user_profile",
                         "works": "user_works",
                         "all": "user_all",
+                        "likes": "user_likes",
+                        "favorites": "user_favorites",
                     }
                     task_type = task_type_map.get(schedule.sync_type, "user_all")
                     await self.submit(task_type, schedule.sec_user_id)

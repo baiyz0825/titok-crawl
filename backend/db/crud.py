@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 from backend.db.database import db
-from backend.db.models import User, Work, MediaFile, Task, Session, Comment, Schedule
+from backend.db.models import User, Work, MediaFile, Task, Session, Comment, Schedule, Favorite
 
 
 # ── Users ──
@@ -505,3 +505,62 @@ async def get_due_schedules() -> list[Schedule]:
     )
     rows = await cursor.fetchall()
     return [Schedule(**dict(r)) for r in rows]
+
+
+# ── Favorites ──
+
+async def add_favorite(aweme_id: str, sec_user_id: str | None = None) -> bool:
+    """Add a work to favorites."""
+    try:
+        now = datetime.now().isoformat()
+        await db.conn.execute(
+            """INSERT INTO favorites (aweme_id, sec_user_id, created_at)
+            VALUES (?, ?, ?)""",
+            (aweme_id, sec_user_id, now),
+        )
+        await db.conn.commit()
+        return True
+    except Exception:
+        # aweme_id already exists
+        return False
+
+
+async def remove_favorite(aweme_id: str) -> bool:
+    """Remove a work from favorites."""
+    cursor = await db.conn.execute(
+        "DELETE FROM favorites WHERE aweme_id = ?", (aweme_id,)
+    )
+    await db.conn.commit()
+    return cursor.rowcount > 0
+
+
+async def is_favorite(aweme_id: str) -> bool:
+    """Check if a work is in favorites."""
+    cursor = await db.conn.execute(
+        "SELECT 1 FROM favorites WHERE aweme_id = ?", (aweme_id,)
+    )
+    row = await cursor.fetchone()
+    return row is not None
+
+
+async def get_favorites(page: int = 1, size: int = 20) -> list[Favorite]:
+    """Get all favorites with pagination."""
+    offset = (page - 1) * size
+    cursor = await db.conn.execute(
+        """SELECT f.*, w.title, w.cover_url, w.sec_user_id, u.nickname
+        FROM favorites f
+        LEFT JOIN works w ON f.aweme_id = w.aweme_id
+        LEFT JOIN users u ON w.sec_user_id = u.sec_user_id
+        ORDER BY f.created_at DESC
+        LIMIT ? OFFSET ?""",
+        (size, offset),
+    )
+    rows = await cursor.fetchall()
+    return [Favorite(**dict(r)) for r in rows]
+
+
+async def count_favorites() -> int:
+    """Count total favorites."""
+    cursor = await db.conn.execute("SELECT COUNT(*) FROM favorites")
+    row = await cursor.fetchone()
+    return row[0]

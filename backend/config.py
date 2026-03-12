@@ -28,14 +28,17 @@ class Settings:
     # Task queue
     MAX_CONCURRENT_TASKS = 1
 
-    # Server ports
+    # Server ports (从环境变量读取，支持高位端口避免冲突)
     API_HOST = "0.0.0.0"
-    API_PORT = 8000
-    MCP_PORT = 8001
+    API_PORT = int(os.environ.get("BACKEND_PORT", "18000"))
+    MCP_PORT = int(os.environ.get("MCP_PORT", "18001"))
 
     # Douyin
     DOUYIN_BASE_URL = "https://www.douyin.com"
     API_PATTERN = "**/aweme/v1/web/**"
+
+    # Favorites
+    AUTO_ADD_TO_FAVORITES = os.environ.get("AUTO_ADD_TO_FAVORITES", "true").lower() in ("true", "1", "yes")
 
     @classmethod
     def ensure_dirs(cls):

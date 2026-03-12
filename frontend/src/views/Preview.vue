@@ -62,15 +62,23 @@
     <!-- 移动端面板遮罩 -->
     <div v-if="panelOpen" class="panel-overlay" @click="panelOpen = false"></div>
 
-    <!-- 移动端浮动头像按钮 -->
-    <button class="fab-avatar" @click="panelOpen = true">
-      <img
-        v-if="selectedUser?.avatar_url"
-        :src="selectedUser.avatar_url"
-        @error="(e: any) => e.target.style.display = 'none'"
-      />
-      <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-    </button>
+    <!-- 移动端导航栏 -->
+    <div class="mobile-nav">
+      <!-- 返回按钮 -->
+      <button class="mobile-back-btn" @click="goBack">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        <span>返回</span>
+      </button>
+      <!-- 浮动头像按钮 -->
+      <button class="fab-avatar" @click="panelOpen = true">
+        <img
+          v-if="selectedUser?.avatar_url"
+          :src="selectedUser.avatar_url"
+          @error="(e: any) => e.target.style.display = 'none'"
+        />
+        <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </button>
+    </div>
 
     <!-- 视频 Feed -->
     <div class="feed-container" ref="feedRef">
@@ -115,8 +123,9 @@
 
           <!-- 右侧互动栏 -->
           <div class="feed-actions">
-            <div class="action-item">
-              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <div class="action-item" @click.stop="toggleFavorite(work)">
+              <svg v-if="favoriteStatus[work.aweme_id]" viewBox="0 0 24 24" width="28" height="28" fill="#ef4444" stroke="#ef4444" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
               <span>{{ formatCount(work.digg_count) }}</span>
             </div>
             <div class="action-item" @click.stop="openComments(work)">
@@ -213,7 +222,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import client from '../api/client'
+
+const router = useRouter()
 
 // --- 状态 ---
 const loadingUsers = ref(false)
@@ -233,6 +245,9 @@ const commentPanelOpen = ref(false)
 const commentTree = ref<any[]>([])
 const commentTotal = ref(0)
 const loadingComments = ref(false)
+
+// 收藏功能
+const favoriteStatus = ref<Record<string, boolean>>({})
 
 const feedRef = ref<HTMLDivElement | null>(null)
 const sentinelRef = ref<HTMLDivElement | null>(null)
@@ -298,6 +313,8 @@ async function loadWorks() {
         w._loading = false
         w._noVideo = false
         w._loaded = false
+        // 检查收藏状态
+        checkFavoriteStatus(w.aweme_id)
       })
       works.value.push(...items)
       page.value++
@@ -405,6 +422,33 @@ function closeComments() {
   commentTree.value = []
 }
 
+// --- 收藏功能 ---
+async function checkFavoriteStatus(aweme_id: string) {
+  try {
+    const res: any = await client.get(`/favorites/${aweme_id}/check`)
+    favoriteStatus.value[aweme_id] = res.favorited
+  } catch {
+    favoriteStatus.value[aweme_id] = false
+  }
+}
+
+async function toggleFavorite(work: any) {
+  const aweme_id = work.aweme_id
+  const isFav = favoriteStatus.value[aweme_id]
+
+  try {
+    if (isFav) {
+      await client.delete(`/favorites/${aweme_id}`)
+      favoriteStatus.value[aweme_id] = false
+    } else {
+      await client.post(`/favorites/${aweme_id}`)
+      favoriteStatus.value[aweme_id] = true
+    }
+  } catch {
+    // 忽略错误，保持原状态
+  }
+}
+
 // --- 播放控制 ---
 function togglePlay(e: Event) {
   const card = (e.target as HTMLElement).closest('.feed-card')
@@ -440,6 +484,11 @@ function formatTime(t: string | undefined): string {
   } catch {
     return ''
   }
+}
+
+// --- 导航 ---
+function goBack() {
+  router.push('/users')
 }
 
 // --- 生命周期 ---
@@ -639,6 +688,46 @@ watch(sentinelRef, (el) => {
 
 .panel-overlay {
   display: none;
+}
+
+/* ===== 移动端导航栏 ===== */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: rgba(15, 15, 15, 0.95);
+  backdrop-filter: blur(10px);
+  z-index: 98;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mobile-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid #10b981;
+  color: #10b981;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mobile-back-btn:hover {
+  background: rgba(16, 185, 129, 0.3);
+}
+
+.mobile-back-btn:active {
+  transform: scale(0.96);
 }
 
 /* ===== Feed ===== */
@@ -984,8 +1073,20 @@ watch(sentinelRef, (el) => {
     z-index: 199;
   }
 
+  .mobile-nav {
+    display: flex;
+  }
+
   .fab-avatar {
     display: flex;
+    position: static;
+    width: 36px;
+    height: 36px;
+    border-width: 1.5px;
+  }
+
+  .feed-container {
+    padding-top: 48px;
   }
 
   .feed-actions {
@@ -1002,6 +1103,16 @@ watch(sentinelRef, (el) => {
   .comment-panel {
     max-width: 100%;
     max-height: 65vh;
+  }
+
+  .comment-panel-close {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
   }
 }
 

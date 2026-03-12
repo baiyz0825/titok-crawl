@@ -118,6 +118,14 @@ CREATE TABLE IF NOT EXISTS schedules (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sec_user_id) REFERENCES users(sec_user_id)
 );
+
+CREATE TABLE IF NOT EXISTS favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aweme_id TEXT UNIQUE NOT NULL,
+    sec_user_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (aweme_id) REFERENCES works(aweme_id) ON DELETE CASCADE
+);
 """
 
 
@@ -147,6 +155,20 @@ class Database:
             if column not in columns:
                 await self._conn.execute(sql)
                 await self._conn.commit()
+
+        # Create favorites table if not exists (for existing databases)
+        cursor = await self._conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='favorites'")
+        if not await cursor.fetchone():
+            await self._conn.execute("""
+                CREATE TABLE favorites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    aweme_id TEXT UNIQUE NOT NULL,
+                    sec_user_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (aweme_id) REFERENCES works(aweme_id) ON DELETE CASCADE
+                )
+            """)
+            await self._conn.commit()
 
     async def close(self):
         if self._conn:

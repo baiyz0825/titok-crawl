@@ -42,6 +42,8 @@
             <el-option label="全部（资料+作品）" value="all" />
             <el-option label="仅资料" value="profile" />
             <el-option label="仅作品" value="works" />
+            <el-option label="喜欢列表" value="likes" />
+            <el-option label="收藏列表" value="favorites" />
           </el-select>
         </div>
         <div class="form-field">
@@ -69,9 +71,9 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="80">
+        <el-table-column label="类型" width="100">
           <template #default="{ row }">
-            <el-tag size="small" round>{{ ({ all: '全部', profile: '资料', works: '作品' } as Record<string,string>)[row.sync_type] || row.sync_type }}</el-tag>
+            <el-tag size="small" round>{{ ({ all: '全部', profile: '资料', works: '作品', likes: '喜欢', favorites: '收藏' } as Record<string,string>)[row.sync_type] || row.sync_type }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="间隔" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile">

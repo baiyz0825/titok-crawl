@@ -20,6 +20,15 @@ class UpdatePriorityRequest(BaseModel):
     priority: int
 
 
+class CreateTaskRequest(BaseModel):
+    task_type: str
+    target: str
+    max_pages: int | None = None
+    max_count: int | None = None
+    download_media: bool = False
+    priority: int = 0
+
+
 @router.get("")
 async def list_tasks(status: str | None = None, page: int = 1, size: int = 20):
     """List tasks with optional status filter."""
@@ -52,6 +61,26 @@ async def progress_stream(task_id: int | None = None):
             progress_manager.unsubscribe(q, task_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("")
+async def create_task(req: CreateTaskRequest):
+    """Create a new task."""
+    params = {
+        "max_pages": req.max_pages,
+        "max_count": req.max_count,
+        "download_media": req.download_media,
+        "priority": req.priority
+    }
+    # Remove None values
+    params = {k: v for k, v in params.items() if v is not None}
+
+    task_id = await scheduler.submit(
+        task_type=req.task_type,
+        target=req.target,
+        **params
+    )
+    return {"task_id": task_id, "status": "pending"}
 
 
 @router.post("/batch-delete")
