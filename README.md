@@ -7,6 +7,8 @@
 - [快速开始](#快速开始)
 - [功能概览](#功能概览)
 - [页面说明](#页面说明)
+- [MCP Server](#mcp-server)
+- [部署](#部署)
 - [常见问题](#常见问题)
 - [技术架构](#技术架构)
 
@@ -40,15 +42,18 @@ cd frontend && npm install && cd ..
 ### 一键启动
 
 ```bash
-./run.sh
+./run.sh              # 正常模式
+./run.sh --headless   # 无头模式（服务器部署）
 ```
+
+> Docker 部署和更多启动选项见 [部署](#部署) 章节。
 
 启动后访问：
 
 | 服务 | 地址 |
 |------|------|
-| Web 管理界面 | http://localhost:5173 |
-| 后端 API | http://localhost:8000 |
+| Web 管理界面 | http://localhost:8000（或 dev 模式 http://localhost:5173） |
+| Datasette 数据库浏览 | http://localhost:8002 |
 | API 文档 | http://localhost:8000/docs |
 | MCP SSE | http://localhost:8001/sse |
 
@@ -211,6 +216,104 @@ cd frontend && npm run dev
 - 用抖音 App 扫码完成登录
 - Cookie 自动保存，下次启动无需重新登录
 - 如遇登录过期，点击「重新登录」
+
+---
+
+## MCP Server
+
+项目内置 MCP（Model Context Protocol）服务，通过 SSE 协议提供 7 个工具，供 AI 客户端（如 Claude Desktop、Cursor 等）调用。
+
+### 连接方式
+
+| 场景 | 端点 |
+|------|------|
+| 本地开发 | `http://localhost:8001/sse` |
+| Docker 部署（Nginx 代理） | `http://your-server/mcp/` |
+
+**Claude Desktop 配置示例（`claude_desktop_config.json`）：**
+
+```json
+{
+  "mcpServers": {
+    "douyin-scraper": {
+      "url": "http://localhost:8001/sse"
+    }
+  }
+}
+```
+
+### 可用工具
+
+#### 采集类（提交后台任务）
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `scrape_user` | `sec_user_id: str` | 采集用户资料 |
+| `scrape_user_works` | `sec_user_id: str, max_pages: int = 5` | 采集用户作品列表 |
+| `search_users` | `keyword: str` | 搜索抖音用户 |
+
+返回 `{task_id, status: "pending"}`，可通过 `get_task_status` 查询进度。
+
+#### 查询类（读取数据库）
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `get_user_info` | `sec_user_id: str` | 查询已存储的用户信息 |
+| `get_works` | `sec_user_id?, work_type?, page?, size?` | 查询作品列表，支持分页和筛选 |
+| `get_task_status` | `task_id: int` | 查询任务执行状态和进度 |
+
+#### 分析类
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `analyze_user` | `sec_user_id: str` | 分析用户数据（互动统计、发布频率、视频/图文比例等） |
+
+### 使用示例
+
+通过 AI 客户端自然语言调用：
+
+- "帮我采集抖音用户 MS4wLjABAAAA... 的资料和作品"
+- "查看这个用户有多少个视频作品"
+- "分析一下这个用户的数据表现"
+- "搜索抖音上叫 xxx 的用户"
+
+---
+
+## 部署
+
+### Docker 部署（推荐）
+
+```bash
+docker-compose up -d
+```
+
+Nginx 统一入口，单端口 80 访问所有服务：
+
+| 路径 | 服务 |
+|------|------|
+| `/` | 前端 Web 界面 |
+| `/api/` | 后端 FastAPI |
+| `/datasette/` | 数据库浏览器 |
+| `/docs` | API 文档 |
+| `/media/` | 媒体文件 |
+| `/mcp/` | MCP SSE |
+
+### 本地启动
+
+```bash
+./run.sh              # 正常模式（GUI 浏览器 + 前端 dev server）
+./run.sh --headless   # 无头模式（无桌面环境服务器）
+./run.sh --no-frontend # 不启动前端 dev server（使用已构建的 dist）
+./run.sh --help       # 查看帮助
+```
+
+| 服务 | 端口 |
+|------|------|
+| 后端 API | http://localhost:8000 |
+| 前端 Dev | http://localhost:5173 |
+| Datasette | http://localhost:8002 |
+| MCP SSE | http://localhost:8001/sse |
+| API 文档 | http://localhost:8000/docs |
 
 ---
 
