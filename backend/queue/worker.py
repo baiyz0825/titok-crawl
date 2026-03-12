@@ -33,6 +33,10 @@ class TaskWorker:
             return await self._scrape_works(task_id, target, parsed_params)
         elif task_type == "user_all":
             return await self._scrape_all(task_id, target, parsed_params)
+        elif task_type == "user_likes":
+            return await self._scrape_likes(task_id, target, parsed_params)
+        elif task_type == "user_favorites":
+            return await self._scrape_favorites(task_id, target, parsed_params)
         elif task_type == "search":
             return await self._search(task_id, target, parsed_params)
         elif task_type == "media_download":
@@ -56,6 +60,7 @@ class TaskWorker:
 
     async def _scrape_works(self, task_id: int, sec_user_id: str, params: dict) -> dict:
         max_pages = params.get("max_pages")
+        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_pages={max_pages}")
         progress_manager.update(task_id, 0.05, "开始采集作品", f"用户 {sec_user_id}")
 
         # Wrap scrape_works to track page progress
@@ -69,8 +74,16 @@ class TaskWorker:
             )
         )
 
+        logger.info(f"[Task {task_id}] Scraped {len(works)} works, starting upsert to DB")
+        # Upsert all works to DB
+        for i, work in enumerate(works):
+            await crud.upsert_work(work)
+            if (i + 1) % 10 == 0:
+                logger.info(f"[Task {task_id}] Upserted {i + 1}/{len(works)} works")
+
         progress_manager.update(task_id, 0.95, "保存数据", f"共 {len(works)} 个作品")
         progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品")
+        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted")
         return {
             "count": len(works),
             "types": {
@@ -94,6 +107,10 @@ class TaskWorker:
                 ""
             )
         )
+
+        # Upsert all works to DB
+        for work in works:
+            await crud.upsert_work(work)
 
         download_count = 0
         if params.get("download_media", False) and works:
@@ -227,3 +244,93 @@ class TaskWorker:
         else:
             progress_manager.update(task_id, 1.0, "完成", "未识别到语音")
             return {"aweme_id": aweme_id, "transcript": None}
+
+    async def _scrape_likes(self, task_id: int, sec_user_id: str, params: dict) -> dict:
+        """Scrape current user's liked videos with upsert (update if exists)."""
+        max_pages = params.get("max_pages")
+        max_count = params.get("max_count")
+        progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
+
+        works = await self.user_scraper.scrape_likes(
+            sec_user_id, max_pages=max_pages,
+            on_page=lambda page_num, total: progress_manager.update(
+                task_id,
+                min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
+                f"采集第 {page_num} 页",
+                f"已获取喜欢的视频数据"
+            )
+        )
+
+        # Upsert all works (update if exists, insert if new)
+        new_count = 0
+        updated_count = 0
+        processed_works = []
+        for work in works:
+            existing = await crud.get_work(work.aweme_id)
+            if existing:
+                updated_count += 1
+            else:
+                new_count += 1
+            await crud.upsert_work(work)
+            processed_works.append(work)
+            # Limit max count if specified
+            if max_count and len(processed_works) >= max_count:
+                break
+
+        progress_manager.update(task_id, 0.95, "保存数据", f"新增 {new_count} 个，更新 {updated_count} 个")
+        progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
+        return {
+            "total": len(processed_works),
+            "new": new_count,
+            "updated": updated_count,
+            "types": {
+                "video": sum(1 for w in processed_works if w.type == "video"),
+                "note": sum(1 for w in processed_works if w.type == "note"),
+            },
+        }
+
+    async def _scrape_favorites(self, task_id: int, sec_user_id: str, params: dict) -> dict:
+        """Scrape current user's favorite videos with upsert (update if exists)."""
+        max_pages = params.get("max_pages")
+        max_count = params.get("max_count")
+        progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
+
+        works = await self.user_scraper.scrape_favorites(
+            sec_user_id, max_pages=max_pages,
+            on_page=lambda page_num, total: progress_manager.update(
+                task_id,
+                min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
+                f"采集第 {page_num} 页",
+                f"已获取收藏的视频数据"
+            )
+        )
+
+        # Upsert all works (update if exists, insert if new)
+        new_count = 0
+        updated_count = 0
+        processed_works = []
+        for work in works:
+            existing = await crud.get_work(work.aweme_id)
+            if existing:
+                updated_count += 1
+            else:
+                new_count += 1
+            await crud.upsert_work(work)
+            # Automatically add to favorites
+            await crud.add_favorite(work.aweme_id, work.sec_user_id)
+            processed_works.append(work)
+            # Limit max count if specified
+            if max_count and len(processed_works) >= max_count:
+                break
+
+        progress_manager.update(task_id, 0.95, "保存数据", f"新增 {new_count} 个，更新 {updated_count} 个")
+        progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
+        return {
+            "total": len(processed_works),
+            "new": new_count,
+            "updated": updated_count,
+            "types": {
+                "video": sum(1 for w in processed_works if w.type == "video"),
+                "note": sum(1 for w in processed_works if w.type == "note"),
+            },
+        }

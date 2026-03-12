@@ -158,9 +158,11 @@ class UserScraper:
         on_page: Callable | None = None,
     ) -> list[Work]:
         """Scrape user's works list with pagination."""
+        logger.info(f"Starting scrape_works for {sec_user_id}, max_pages={max_pages}")
         page = await engine.get_page()
         self.interceptor.clear()
         await self.interceptor.setup(page)
+        logger.info(f"Interceptor setup complete for {sec_user_id}")
 
         all_works = []
         page_count = 0
@@ -170,18 +172,29 @@ class UserScraper:
             current_url = page.url
             user_url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
             if sec_user_id not in current_url:
+                logger.info(f"Navigating to {user_url}")
                 ok = await engine.safe_goto(page, user_url)
                 if not ok:
                     logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
                     return []
+                logger.info(f"Navigation successful, current URL: {page.url}")
+            else:
+                logger.info(f"Already on user page: {page.url}")
 
             # Wait for initial works data
+            logger.info(f"Waiting for aweme/post API (timeout=15s)...")
             data = await self.interceptor.wait_for("aweme/post", timeout=15)
             if data:
+                logger.info(f"Got initial data, has_more={data.get('has_more', 0)}")
                 works = self._parse_works_response(data, sec_user_id)
                 all_works.extend(works)
                 page_count += 1
                 logger.info(f"Page {page_count}: got {len(works)} works")
+            else:
+                logger.warning(f"No data received from aweme/post API!")
+                # Log captured URLs for debugging
+                captured = self.interceptor.get_captured_urls()
+                logger.warning(f"Captured URLs: {captured[:5]}")  # First 5 URLs
 
             # Pagination loop
             effective_max = max_pages or 999

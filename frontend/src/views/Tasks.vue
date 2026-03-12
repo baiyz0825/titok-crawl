@@ -2,7 +2,7 @@
   <div class="page">
     <div class="page-header">
       <h1>任务队列</h1>
-      <p class="page-subtitle">管理数据采集任务</p>
+      <p class="page-subtitle">管理和创建数据采集任务</p>
     </div>
 
     <div class="card">
@@ -19,6 +19,7 @@
           <el-tag v-if="selectedTasks.length" type="info" round>已选 {{ selectedTasks.length }}</el-tag>
         </div>
         <div class="toolbar-right">
+          <el-button type="primary" @click="showCreateDialog = true">新建任务</el-button>
           <el-button v-if="selectedTasks.length" type="danger" plain @click="batchDelete">删除选中</el-button>
           <el-button @click="fetchTasks" :loading="loading">刷新</el-button>
         </div>
@@ -85,6 +86,77 @@
         />
       </div>
     </div>
+
+    <!-- 创建任务对话框 -->
+    <el-dialog v-model="showCreateDialog" title="新建采集任务" width="500px" @close="resetForm">
+      <el-form :model="form" label-width="100px" label-position="left">
+        <el-form-item label="任务类型">
+          <el-select v-model="form.task_type" style="width: 100%">
+            <el-option label="用户资料" value="user_profile" />
+            <el-option label="用户作品" value="user_works" />
+            <el-option label="全量采集" value="user_all" />
+            <el-option label="喜欢列表" value="user_likes" />
+            <el-option label="收藏列表" value="user_favorites" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="目标用户">
+          <div style="display: flex; gap: 8px;">
+            <el-select
+              v-model="form.target"
+              filterable
+              remote
+              :remote-method="searchUsers"
+              :loading="userSearchLoading"
+              placeholder="搜索或选择用户"
+              style="flex: 1"
+              @focus="onUserSelectFocus"
+            >
+              <el-option
+                v-for="u in userOptions"
+                :key="u.sec_user_id"
+                :label="u.nickname || u.douyin_id || u.sec_user_id"
+                :value="u.sec_user_id"
+              >
+                <div class="user-option">
+                  <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
+                  <div class="user-option-info">
+                    <span class="user-option-name">{{ u.nickname || '-' }}</span>
+                    <span class="user-option-id">{{ u.douyin_id || u.sec_user_id?.slice(0, 18) + '...' }}</span>
+                  </div>
+                </div>
+              </el-option>
+            </el-select>
+            <el-button
+              type="success"
+              plain
+              @click="selectCurrentUser"
+              :loading="currentUserLoading"
+              title="当前登录用户"
+            >
+              我
+            </el-button>
+          </div>
+        </el-form-item>
+
+        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites'].includes(form.task_type)" label="最大页数">
+          <el-input-number v-model="form.max_pages" :min="1" :max="50" placeholder="不限制" style="width: 100%" />
+        </el-form-item>
+
+        <el-form-item v-if="['user_likes', 'user_favorites'].includes(form.task_type)" label="最大数量">
+          <el-input-number v-model="form.max_count" :min="1" :max="1000" placeholder="不限制" style="width: 100%" />
+        </el-form-item>
+
+        <el-form-item v-if="form.task_type === 'user_all'" label="下载媒体">
+          <el-switch v-model="form.download_media" />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showCreateDialog = false">取消</el-button>
+        <el-button type="primary" @click="createTask" :loading="submitting">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -104,8 +176,33 @@ const selectedTasks = ref<any[]>([])
 let refreshTimer: ReturnType<typeof setInterval>
 let eventSource: EventSource | null = null
 
+// 创建任务相关
+const showCreateDialog = ref(false)
+const submitting = ref(false)
+const form = ref({
+  task_type: 'user_profile',
+  target: '',
+  max_pages: undefined,
+  max_count: undefined,
+  download_media: false
+})
+const userOptions = ref<any[]>([])
+const userSearchLoading = ref(false)
+const currentUserLoading = ref(false)
+
 function typeLabel(t: string) {
-  return ({ user_profile: '用户资料', user_works: '用户作品', user_all: '全量采集', search: '搜索', comments: '评论', media_download: '媒体下载' } as Record<string, string>)[t] || t
+  return ({
+    user_profile: '用户资料',
+    user_works: '用户作品',
+    user_all: '全量采集',
+    user_likes: '喜欢列表',
+    user_favorites: '收藏列表',
+    search: '搜索',
+    comments: '评论',
+    media_download: '媒体下载',
+    work_info: '作品信息',
+    speech_recognition: '语音识别'
+  } as Record<string, string>)[t] || t
 }
 
 function statusLabel(s: string) {
@@ -137,6 +234,85 @@ async function batchDelete() {
   await client.post('/tasks/batch-delete', { task_ids: ids })
   ElMessage.success('删除成功')
   fetchTasks()
+}
+
+// 创建任务相关方法
+async function searchUsers(query: string) {
+  userSearchLoading.value = true
+  try {
+    const params: any = { size: 20 }
+    if (query) {
+      params.keyword = query
+    }
+    const res: any = await client.get('/users', { params })
+    userOptions.value = res.items || []
+  } catch {
+    userOptions.value = []
+  }
+  userSearchLoading.value = false
+}
+
+async function onUserSelectFocus() {
+  // 当没有搜索词时，加载最近更新的 20 个用户
+  if (!form.value.target && userOptions.value.length === 0) {
+    await searchUsers('')
+  }
+}
+
+async function createTask() {
+  if (!form.value.target) {
+    ElMessage.warning('请选择目标用户')
+    return
+  }
+
+  submitting.value = true
+  try {
+    const params: any = {
+      task_type: form.value.task_type,
+      target: form.value.target
+    }
+    if (form.value.max_pages) params.max_pages = form.value.max_pages
+    if (form.value.max_count) params.max_count = form.value.max_count
+    if (form.value.download_media) params.download_media = form.value.download_media
+
+    await client.post('/tasks', params)
+    ElMessage.success('任务已创建')
+    showCreateDialog.value = false
+    fetchTasks()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+function resetForm() {
+  form.value = {
+    task_type: 'user_profile',
+    target: '',
+    max_pages: undefined,
+    max_count: undefined,
+    download_media: false
+  }
+  userOptions.value = []
+}
+
+async function selectCurrentUser() {
+  currentUserLoading.value = true
+  try {
+    const res: any = await client.get('/sessions/current-user')
+    // 设置目标用户
+    form.value.target = res.sec_user_id
+    // 如果有完整用户信息，也添加到选项列表中显示
+    if (res.nickname || res.douyin_id || res.avatar_url) {
+      userOptions.value = [res]
+    }
+    ElMessage.success('已选择当前登录用户')
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '获取当前用户失败，请确保已登录')
+  } finally {
+    currentUserLoading.value = false
+  }
 }
 
 function startProgressSSE() {
@@ -185,4 +361,10 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
   :deep(.col-hide-mobile) { display: none !important; }
   :deep(.col-action) { width: 120px !important; min-width: 120px !important; }
 }
+
+/* 创建任务对话框样式 */
+.user-option { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.user-option-info { display: flex; flex-direction: column; min-width: 0; }
+.user-option-name { font-size: 13px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-option-id { font-size: 11px; color: #94a3b8; }
 </style>
