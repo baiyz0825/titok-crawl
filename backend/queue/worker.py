@@ -64,7 +64,8 @@ class TaskWorker:
         max_count = params.get("max_count")
         scrape_comments = params.get("scrape_comments", False)
         refresh_info = params.get("refresh_info", False)
-        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}, refresh_info={refresh_info}")
+        download_media = params.get("download_media", False)
+        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}, refresh_info={refresh_info}, download_media={download_media}")
         progress_manager.update(task_id, 0.05, "开始采集作品", f"用户 {sec_user_id}")
 
         # Wrap scrape_works to track page progress
@@ -120,18 +121,43 @@ class TaskWorker:
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
 
+        # Download media if requested
+        download_count = 0
+        if download_media and works:
+            logger.info(f"[Task {task_id}] Starting media download for {len(works)} works")
+            progress_manager.update(task_id, 0.98, "下载媒体", f"准备下载 {len(works)} 个作品的媒体文件")
+            for i, work in enumerate(works):
+                try:
+                    progress_manager.update(
+                        task_id,
+                        0.98 + 0.01 * (i + 1) / len(works),
+                        f"下载媒体 {i+1}/{len(works)}",
+                        work.aweme_id
+                    )
+                    await self.media_downloader.download_work_media(
+                        work.aweme_id, sec_user_id, work.extra_data
+                    )
+                    download_count += 1
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(works)} works")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+
         extra_info = []
         if refreshed_count > 0:
             extra_info.append(f"刷新 {refreshed_count} 个作品信息")
         if comments_count > 0:
             extra_info.append(f"{comments_count} 条评论")
+        if download_count > 0:
+            extra_info.append(f"下载 {download_count} 个媒体")
 
         progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品" + (extra_info.join(", ") if extra_info else ""))
-        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {refreshed_count} refreshed, {comments_count} comments scraped")
+        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {refreshed_count} refreshed, {comments_count} comments scraped, {download_count} media downloaded")
         return {
             "count": len(works),
             "refreshed_count": refreshed_count,
             "comments_count": comments_count,
+            "media_downloaded": download_count,
             "types": {
                 "video": sum(1 for w in works if w.type == "video"),
                 "note": sum(1 for w in works if w.type == "note"),
