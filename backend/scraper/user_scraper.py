@@ -322,11 +322,22 @@ class UserScraper:
                         logger.warning("Captcha detected and not resolved, stopping pagination")
                         break
 
-                # Scroll to trigger next page
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(1000)
+                # Improved scrolling strategy: scroll gradually to trigger lazy loading
+                logger.info("Scrolling to load more content...")
 
-                data = await self.interceptor.wait_for("aweme/favorite", timeout=10)
+                # Method 1: Scroll to bottom
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1500)
+
+                # Method 2: Small incremental scroll
+                await page.evaluate("window.scrollBy(0, 500)")
+                await page.wait_for_timeout(500)
+
+                # Method 3: Scroll to bottom again
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(2000)
+
+                data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
                 if not data:
                     logger.warning("No more data received from API, stopping pagination")
                     break
@@ -421,11 +432,22 @@ class UserScraper:
                         logger.warning("Captcha detected and not resolved, stopping pagination")
                         break
 
-                # Scroll to trigger next page
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(1000)
+                # Improved scrolling strategy: scroll gradually to trigger lazy loading
+                logger.info("Scrolling to load more content...")
 
-                data = await self.interceptor.wait_for("aweme/favorite", timeout=10)
+                # Method 1: Scroll to bottom
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1500)
+
+                # Method 2: Small incremental scroll
+                await page.evaluate("window.scrollBy(0, 500)")
+                await page.wait_for_timeout(500)
+
+                # Method 3: Scroll to bottom again
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(2000)
+
+                data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
                 if not data:
                     logger.warning("No more data received from API, stopping pagination")
                     break
