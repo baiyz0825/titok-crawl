@@ -54,7 +54,7 @@ class TaskWorker:
 
     async def _scrape_profile(self, task_id: int, sec_user_id: str) -> dict:
         progress_manager.update(task_id, 0.1, "采集用户资料", f"正在获取 {sec_user_id}")
-        user = await self.user_scraper.scrape_profile(sec_user_id)
+        user = await self.user_scraper.scrape_profile(task_id, sec_user_id)
         progress_manager.update(task_id, 1.0, "完成", f"用户 {user.nickname if user else 'unknown'}")
         if user:
             return {"nickname": user.nickname, "follower_count": user.follower_count}
@@ -166,7 +166,7 @@ class TaskWorker:
 
     async def _scrape_all(self, task_id: int, sec_user_id: str, params: dict) -> dict:
         progress_manager.update(task_id, 0.05, "采集用户资料", sec_user_id)
-        user = await self.user_scraper.scrape_profile(sec_user_id)
+        user = await self.user_scraper.scrape_profile(task_id, sec_user_id)
 
         progress_manager.update(task_id, 0.2, "采集作品列表", sec_user_id)
         max_count = params.get("max_count")
@@ -397,7 +397,7 @@ class TaskWorker:
                         f"采集作者 {i+1}/{len(author_ids)}",
                         author_id
                     )
-                    user = await self.user_scraper.scrape_profile(author_id)
+                    user = await self.user_scraper.scrape_profile(task_id, author_id)
                     if user:
                         await crud.upsert_user(user)
                         creators_collected += 1
@@ -470,7 +470,7 @@ class TaskWorker:
                         f"采集作者 {i+1}/{len(author_ids)}",
                         author_id
                     )
-                    user = await self.user_scraper.scrape_profile(author_id)
+                    user = await self.user_scraper.scrape_profile(task_id, author_id)
                     if user:
                         await crud.upsert_user(user)
                         creators_collected += 1
@@ -533,7 +533,7 @@ class TaskWorker:
                 if collect_profile and following_id not in processed_users:
                     try:
                         progress_manager.update(task_id, 0.1, f"采集用户资料 ({len(all_users_data)})", user_info["nickname"] or following_id[:20])
-                        user = await self.user_scraper.scrape_profile(following_id)
+                        user = await self.user_scraper.scrape_profile(task_id, following_id)
                         if user:
                             await crud.upsert_user(user)
                             all_users_data.append(user_info)

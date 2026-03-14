@@ -18,7 +18,7 @@ class UserScraper:
     def __init__(self):
         self.interceptor = ResponseInterceptor()
 
-    async def scrape_profile(self, sec_user_id: str) -> User | None:
+    async def scrape_profile(self, task_id: int, sec_user_id: str) -> User | None:
         """Get user profile from API or SSR data."""
         # 优先尝试从 SSR 数据读取（对于当前登录用户）
         current_user_id = await engine.get_current_user_id()
@@ -26,7 +26,7 @@ class UserScraper:
 
         if is_current_user:
             logger.info(f"Trying to get current user {sec_user_id} from SSR data")
-            user_from_ssr = await self._get_user_from_ssr(sec_user_id)
+            user_from_ssr = await self._get_user_from_ssr(task_id, sec_user_id)
             if user_from_ssr:
                 # 保存到数据库
                 await crud.upsert_user(user_from_ssr)
@@ -36,12 +36,13 @@ class UserScraper:
                 logger.info(f"No SSR data for current user, falling back to API")
 
         # SSR 数据不可用，使用 API 拦截方式
-        return await self._scrape_profile_from_api(sec_user_id, is_current_user)
+        return await self._scrape_profile_from_api(task_id, sec_user_id, is_current_user)
 
-    async def _get_user_from_ssr(self, sec_user_id: str) -> User | None:
+    async def _get_user_from_ssr(self, task_id: int, sec_user_id: str) -> User | None:
         """Try to extract user info from SSR_RENDER_DATA."""
+        page = None
         try:
-            page = await engine.get_page()
+            page = await engine.acquire_page(task_id)
 
             # 从 SSR_RENDER_DATA 读取用户信息
             # ✅ 正确路径: window.SSR_RENDER_DATA.app.user.info
@@ -89,10 +90,17 @@ class UserScraper:
         except Exception as e:
             logger.debug(f"Failed to get user from SSR: {e}")
             return None
+        finally:
+            if page:
+                try:
+                    await engine.release_page(task_id)
+                    logger.debug(f"Released page for task #{task_id} in _get_user_from_ssr")
+                except Exception as e:
+                    logger.warning(f"Failed to release page: {e}")
 
-    async def _scrape_profile_from_api(self, sec_user_id: str, is_current_user: bool) -> User | None:
+    async def _scrape_profile_from_api(self, task_id: int, sec_user_id: str, is_current_user: bool) -> User | None:
         """Navigate to user page and intercept profile API response."""
-        page = await engine.get_page()
+        page = await engine.acquire_page(task_id)
         self.interceptor.clear()
         await self.interceptor.setup(page)
 
