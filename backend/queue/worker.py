@@ -353,6 +353,7 @@ class TaskWorker:
         """Scrape current user's liked videos with upsert (update if exists)."""
         max_pages = params.get("max_pages")
         max_count = params.get("max_count")
+        collect_creators = params.get("collect_creators", False)
         progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
 
         works = await self.user_scraper.scrape_likes(
@@ -381,12 +382,38 @@ class TaskWorker:
             if max_count and len(processed_works) >= max_count:
                 break
 
-        progress_manager.update(task_id, 0.95, "保存数据", f"新增 {new_count} 个，更新 {updated_count} 个")
+        # Collect creators if requested
+        creators_collected = 0
+        if collect_creators and processed_works:
+            # Collect unique author sec_user_ids
+            author_ids = list(set(w.sec_user_id for w in processed_works))
+            progress_manager.update(task_id, 0.95, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
+
+            for i, author_id in enumerate(author_ids):
+                try:
+                    progress_manager.update(
+                        task_id,
+                        0.95 + 0.04 * (i + 1) / len(author_ids),
+                        f"采集作者 {i+1}/{len(author_ids)}",
+                        author_id
+                    )
+                    user = await self.user_scraper.scrape_profile(author_id)
+                    if user:
+                        await crud.upsert_user(user)
+                        creators_collected += 1
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+
+        extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
+        if creators_collected > 0:
+            extra_info += f"，采集作者 {creators_collected} 个"
+
         progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
         return {
             "total": len(processed_works),
             "new": new_count,
             "updated": updated_count,
+            "creators_collected": creators_collected,
             "types": {
                 "video": sum(1 for w in processed_works if w.type == "video"),
                 "note": sum(1 for w in processed_works if w.type == "note"),
@@ -397,6 +424,7 @@ class TaskWorker:
         """Scrape current user's favorite videos with upsert (update if exists)."""
         max_pages = params.get("max_pages")
         max_count = params.get("max_count")
+        collect_creators = params.get("collect_creators", False)
         progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
 
         works = await self.user_scraper.scrape_favorites(
@@ -427,12 +455,38 @@ class TaskWorker:
             if max_count and len(processed_works) >= max_count:
                 break
 
-        progress_manager.update(task_id, 0.95, "保存数据", f"新增 {new_count} 个，更新 {updated_count} 个")
+        # Collect creators if requested
+        creators_collected = 0
+        if collect_creators and processed_works:
+            # Collect unique author sec_user_ids
+            author_ids = list(set(w.sec_user_id for w in processed_works))
+            progress_manager.update(task_id, 0.95, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
+
+            for i, author_id in enumerate(author_ids):
+                try:
+                    progress_manager.update(
+                        task_id,
+                        0.95 + 0.04 * (i + 1) / len(author_ids),
+                        f"采集作者 {i+1}/{len(author_ids)}",
+                        author_id
+                    )
+                    user = await self.user_scraper.scrape_profile(author_id)
+                    if user:
+                        await crud.upsert_user(user)
+                        creators_collected += 1
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+
+        extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
+        if creators_collected > 0:
+            extra_info += f"，采集作者 {creators_collected} 个"
+
         progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
         return {
             "total": len(processed_works),
             "new": new_count,
             "updated": updated_count,
+            "creators_collected": creators_collected,
             "types": {
                 "video": sum(1 for w in processed_works if w.type == "video"),
                 "note": sum(1 for w in processed_works if w.type == "note"),

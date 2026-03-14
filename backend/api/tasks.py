@@ -26,6 +26,12 @@ class CreateTaskRequest(BaseModel):
     max_pages: int | None = None
     max_count: int | None = None
     download_media: bool = False
+    scrape_comments: bool = False
+    refresh_info: bool = False
+    collect_profile: bool = False
+    collect_creators: bool = False
+    recursive: bool = False
+    recursive_depth: int = 1
     priority: int = 0
     is_scheduled: bool = False
     schedule_interval: int | None = None
@@ -73,6 +79,12 @@ async def create_task(req: CreateTaskRequest):
         "max_pages": req.max_pages,
         "max_count": req.max_count,
         "download_media": req.download_media,
+        "scrape_comments": req.scrape_comments,
+        "refresh_info": req.refresh_info,
+        "collect_profile": req.collect_profile,
+        "collect_creators": req.collect_creators,
+        "recursive": req.recursive,
+        "recursive_depth": req.recursive_depth,
         "priority": req.priority,
         "is_scheduled": req.is_scheduled,
         "schedule_interval": req.schedule_interval,

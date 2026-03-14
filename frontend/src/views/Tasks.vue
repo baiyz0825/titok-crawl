@@ -138,42 +138,46 @@
         </el-form-item>
 
         <el-form-item label="目标用户">
-          <div style="display: flex; gap: 8px;">
-            <el-select
-              v-model="form.target"
-              filterable
-              remote
-              :remote-method="searchUsers"
-              :loading="userSearchLoading"
-              placeholder="搜索或选择用户"
-              style="flex: 1"
-              @visible-change="onSelectVisibleChange"
+          <el-select
+            v-model="form.target"
+            filterable
+            remote
+            :remote-method="searchUsers"
+            :loading="userSearchLoading"
+            placeholder="搜索或选择用户"
+            style="width: 100%"
+            @visible-change="onSelectVisibleChange"
+          >
+            <el-option
+              v-if="currentUser"
+              key="current-user"
+              :label="`我 (${currentUser.nickname || currentUser.douyin_id || '当前用户'})`"
+              :value="currentUser.sec_user_id"
             >
-              <el-option
-                v-for="u in userOptions"
-                :key="u.sec_user_id"
-                :label="u.nickname || u.douyin_id || u.sec_user_id"
-                :value="u.sec_user_id"
-              >
-                <div class="user-option">
-                  <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
-                  <div class="user-option-info">
-                    <span class="user-option-name">{{ u.nickname || '-' }}</span>
-                    <span class="user-option-id">{{ u.douyin_id || u.sec_user_id?.slice(0, 18) + '...' }}</span>
-                  </div>
+              <div class="user-option current-user-option">
+                <el-tag type="success" size="small" style="margin-right: 8px">我</el-tag>
+                <el-avatar :src="currentUser.avatar_url" :size="24">{{ (currentUser.nickname||'?')[0] }}</el-avatar>
+                <div class="user-option-info">
+                  <span class="user-option-name">{{ currentUser.nickname || '-' }}</span>
+                  <span class="user-option-id">{{ currentUser.douyin_id || currentUser.sec_user_id?.slice(0, 18) + '...' }}</span>
                 </div>
-              </el-option>
-            </el-select>
-            <el-button
-              type="success"
-              plain
-              @click="selectCurrentUser"
-              :loading="currentUserLoading"
-              title="当前登录用户"
+              </div>
+            </el-option>
+            <el-option
+              v-for="u in userOptions"
+              :key="u.sec_user_id"
+              :label="u.nickname || u.douyin_id || u.sec_user_id"
+              :value="u.sec_user_id"
             >
-              我
-            </el-button>
-          </div>
+              <div class="user-option">
+                <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
+                <div class="user-option-info">
+                  <span class="user-option-name">{{ u.nickname || '-' }}</span>
+                  <span class="user-option-id">{{ u.douyin_id || u.sec_user_id?.slice(0, 18) + '...' }}</span>
+                </div>
+              </div>
+            </el-option>
+          </el-select>
         </el-form-item>
 
         <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites', 'user_following'].includes(form.task_type)" label="最大采集数量">
@@ -189,11 +193,18 @@
           </el-checkbox-group>
         </el-form-item>
 
+        <el-form-item v-if="['user_likes', 'user_favorites'].includes(form.task_type)" label="采集选项">
+          <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox label="collect_creators">采集视频作者信息（将视频发布者的资料一并采集）</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+
         <el-form-item v-if="form.task_type === 'user_following'" label="关注列表选项">
           <el-checkbox-group v-model="form.sync_types" style="display: flex; flex-direction: column; gap: 8px">
-            <el-checkbox value="collect_profile" label="采集用户资料（头像、昵称、简介等）" />
-            <el-checkbox value="recursive" label="递归采集（采集关注用户的关注列表）">
+            <el-checkbox label="collect_profile">采集用户资料（头像、昵称、简介等）</el-checkbox>
+            <el-checkbox label="recursive">
               <template #default>
+                <div>递归采集（采集关注用户的关注列表）</div>
                 <div style="display: flex; flex-direction: column; gap: 8px; margin-left: 24px; margin-top: 8px;" v-if="form.sync_types.includes('recursive')">
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 13px; color: #64748b;">递归深度：</span>
@@ -247,7 +258,7 @@ const form = ref({
 })
 const userOptions = ref<any[]>([])
 const userSearchLoading = ref(false)
-const currentUserLoading = ref(false)
+const currentUser = ref<any>(null)
 
 function typeLabel(t: string) {
   return ({
@@ -325,9 +336,20 @@ async function searchUsers(query: string = '') {
 }
 
 async function onSelectVisibleChange(visible: boolean) {
-  // 当下拉框展开时，如果列表为空，自动加载用户列表
-  if (visible && userOptions.value.length === 0) {
-    await searchUsers('')
+  if (visible) {
+    // 如果列表为空，自动加载用户列表
+    if (userOptions.value.length === 0) {
+      await searchUsers('')
+    }
+    // 如果还没有当前用户信息，自动加载
+    if (!currentUser.value) {
+      try {
+        const res: any = await client.get('/sessions/current-user')
+        currentUser.value = res
+      } catch {
+        // 忽略错误，可能未登录
+      }
+    }
   }
 }
 
@@ -363,6 +385,9 @@ async function createTask() {
     if (form.value.sync_types.includes('collect_profile')) {
       params.collect_profile = true
     }
+    if (form.value.sync_types.includes('collect_creators')) {
+      params.collect_creators = true
+    }
     if (form.value.sync_types.includes('recursive')) {
       params.recursive = true
       params.recursive_depth = form.value.recursive_depth || 1
@@ -389,24 +414,6 @@ function resetForm() {
     max_count: undefined,
     sync_types: [],
     recursive_depth: 1
-  }
-}
-
-async function selectCurrentUser() {
-  currentUserLoading.value = true
-  try {
-    const res: any = await client.get('/sessions/current-user')
-    // 设置目标用户
-    form.value.target = res.sec_user_id
-    // 如果有完整用户信息，也添加到选项列表中显示
-    if (res.nickname || res.douyin_id || res.avatar_url) {
-      userOptions.value = [res]
-    }
-    ElMessage.success('已选择当前登录用户')
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '获取当前用户失败，请确保已登录')
-  } finally {
-    currentUserLoading.value = false
   }
 }
 
@@ -471,7 +478,8 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 
 /* 创建任务对话框样式 */
 .user-option { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
-.user-option-info { display: flex; flex-direction: column; min-width: 0; }
+.current-user-option { background: #f0fdf4; border-radius: 6px; padding: 6px 8px; }
+.user-option-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .user-option-name { font-size: 13px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-option-id { font-size: 11px; color: #94a3b8; }
 </style>
