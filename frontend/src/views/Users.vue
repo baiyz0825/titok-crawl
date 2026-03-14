@@ -22,6 +22,7 @@
         </div>
         <div class="toolbar-right">
           <el-button v-if="selectedUsers.length" type="danger" plain @click="deleteTarget = selectedUsers.map(u => u.sec_user_id); showDeleteDialog = true">删除选中</el-button>
+          <el-button v-if="selectedUsers.length" type="primary" plain @click="batchCreateTasks">采集选中用户</el-button>
           <el-button @click="fetchUsers" :loading="loading">刷新</el-button>
         </div>
       </div>

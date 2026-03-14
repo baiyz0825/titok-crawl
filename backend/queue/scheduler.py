@@ -213,27 +213,18 @@ class TaskScheduler:
         """Check for due scheduled tasks every 60 seconds."""
         while self._running:
             try:
-                due = await crud.get_due_schedules()
-                for schedule in due:
-                    # Create task based on sync_type
-                    task_type_map = {
-                        "profile": "user_profile",
-                        "works": "user_works",
-                        "all": "user_all",
-                        "likes": "user_likes",
-                        "favorites": "user_favorites",
-                    }
-                    task_type = task_type_map.get(schedule.sync_type, "user_all")
-                    await self.submit(task_type, schedule.sec_user_id)
-                    logger.info(f"Scheduled task created: {task_type} for {schedule.nickname or schedule.sec_user_id}")
+                due_tasks = await crud.get_due_scheduled_tasks()
+                for task in due_tasks:
+                    # For scheduled tasks, we need to execute them and update next_run_at
+                    # Reset the task to pending so it can be picked up by the main scheduler loop
+                    if task.status == 'completed':
+                        await crud.update_task(task.id, status='pending')
+                        logger.info(f"Scheduled task #{task.id} reactivated: {task.task_type} -> {task.target}")
 
-                    # Update next_run_at
-                    next_run = (datetime.now() + timedelta(minutes=schedule.interval_minutes)).isoformat()
-                    await crud.update_schedule(
-                        schedule.id,
-                        last_run_at=datetime.now().isoformat(),
-                        next_run_at=next_run,
-                    )
+                    # Update next_run_at for this scheduled task
+                    if task.schedule_interval:
+                        await crud.update_scheduled_task_next_run(task.id, task.schedule_interval)
+                        logger.info(f"Updated next_run_at for scheduled task #{task.id}")
 
                 await asyncio.sleep(60)
             except asyncio.CancelledError:
