@@ -278,13 +278,22 @@ class UserScraper:
         try:
             # Navigate to likes page
             url = f"{settings.DOUYIN_BASE_URL}/user/self?showTab=like"
+            logger.info(f"Navigating to likes page: {url}")
             ok = await engine.safe_goto(page, url)
             if not ok:
                 logger.error("Failed to load likes page (captcha timeout)")
                 return []
 
+            logger.info("Page loaded, waiting for module/feed API (timeout=15s)...")
+
             # Wait for initial likes data (module/feed API with module_id=3003101)
             data = await self.interceptor.wait_for("module/feed", timeout=15)
+
+            if not data:
+                logger.warning("No module/feed API received, checking captured APIs...")
+                all_apis = self.interceptor.get_captured_urls()
+                logger.warning(f"Captured APIs: {all_apis}")
+
             if data:
                 aweme_list = data.get("aweme_list", [])
                 works = self._parse_works_from_list(aweme_list, sec_user_id)
@@ -350,13 +359,22 @@ class UserScraper:
         try:
             # Navigate to favorites page
             url = f"{settings.DOUYIN_BASE_URL}/user/self?showTab=favorite_collection"
+            logger.info(f"Navigating to favorites page: {url}")
             ok = await engine.safe_goto(page, url)
             if not ok:
                 logger.error("Failed to load favorites page (captcha timeout)")
                 return []
 
+            logger.info("Page loaded, waiting for aweme/favorite API (timeout=15s)...")
+
             # Wait for initial favorites data
             data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
+
+            if not data:
+                logger.warning("No aweme/favorite API received, checking captured APIs...")
+                all_apis = self.interceptor.get_captured_urls()
+                logger.warning(f"Captured APIs: {all_apis}")
+
             if data:
                 aweme_list = data.get("aweme_list", [])
                 works = self._parse_works_from_list(aweme_list, sec_user_id)
