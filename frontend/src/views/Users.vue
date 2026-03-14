@@ -263,6 +263,18 @@ const rescrapeTarget = ref<any>(null)
 const rescrapeStatus = ref<any>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
+// Batch task creation related
+const showBatchTaskDialog = ref(false)
+const submittingBatchTasks = ref(false)
+const batchTaskForm = ref({
+  task_type: 'user_profile',
+  task_category: 'once',
+  schedule_interval: 'daily',
+  max_count: undefined,
+  sync_types: [] as string[],
+  recursive_depth: 1
+})
+
 function formatCount(n: number | undefined) {
   if (!n && n !== 0) return '-'
   if (n >= 10000) return (n / 10000).toFixed(1) + 'w'
