@@ -152,6 +152,12 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
+            # Close the page to free resources and avoid conflicts
+            try:
+                await page.close()
+                logger.debug("Closed page after scraping")
+            except Exception as e:
+                logger.warning(f"Failed to close page: {e}")
 
     async def scrape_works(
         self, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
@@ -262,6 +268,12 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
+            # Close the page to free resources and avoid conflicts
+            try:
+                await page.close()
+                logger.debug("Closed page after scraping")
+            except Exception as e:
+                logger.warning(f"Failed to close page: {e}")
 
     async def scrape_likes(
         self, sec_user_id: str, max_pages: int | None = None,
@@ -373,6 +385,12 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
+            # Close the page to free resources and avoid conflicts
+            try:
+                await page.close()
+                logger.debug("Closed page after scraping")
+            except Exception as e:
+                logger.warning(f"Failed to close page: {e}")
 
     async def scrape_favorites(
         self, sec_user_id: str, max_pages: int | None = None,
@@ -483,6 +501,12 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
+            # Close the page to free resources and avoid conflicts
+            try:
+                await page.close()
+                logger.debug("Closed page after scraping")
+            except Exception as e:
+                logger.warning(f"Failed to close page: {e}")
 
     async def scrape_following(
         self, sec_user_id: str, max_count: int | None = None,
@@ -600,6 +624,12 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
+            # Close the page to free resources and avoid conflicts
+            try:
+                await page.close()
+                logger.debug("Closed page after scraping")
+            except Exception as e:
+                logger.warning(f"Failed to close page: {e}")
 
     def _parse_user(self, user_info: dict, sec_user_id: str) -> User:
         """Parse user info from API response."""

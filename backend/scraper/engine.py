@@ -110,15 +110,16 @@ class ScraperEngine:
             self._playwright = None
 
     async def get_page(self) -> Page:
-        """Get an available page, reusing existing or creating new."""
+        """Get an available page, creating a new one for each task to avoid conflicts."""
         if self._context is None:
             raise RuntimeError("Engine not started")
 
-        pages = self._context.pages
-        if pages:
-            return pages[0]
-
+        # Always create a new page for each task to avoid concurrent conflicts
         page = await self._context.new_page()
+
+        # Set default timeout and viewport
+        page.set_default_timeout(settings.PAGE_TIMEOUT)
+
         return page
 
     async def new_page(self) -> Page:
