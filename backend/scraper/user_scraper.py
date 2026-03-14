@@ -284,13 +284,13 @@ class UserScraper:
                 logger.error("Failed to load likes page (captcha timeout)")
                 return []
 
-            logger.info("Page loaded, waiting for module/feed API (timeout=15s)...")
+            logger.info("Page loaded, waiting for aweme/favorite API (timeout=15s)...")
 
-            # Wait for initial likes data (module/feed API with module_id=3003101)
-            data = await self.interceptor.wait_for("module/feed", timeout=15)
+            # Wait for initial likes data (aweme/favorite API)
+            data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
 
             if not data:
-                logger.warning("No module/feed API received, checking captured APIs...")
+                logger.warning("No aweme/favorite API received, checking captured APIs...")
                 all_apis = self.interceptor.get_captured_urls()
                 logger.warning(f"Captured APIs: {all_apis}")
 
