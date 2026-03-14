@@ -286,6 +286,112 @@
         <el-button type="primary" @click="doRescrape">开始采集</el-button>
       </template>
     </el-dialog>
+
+    <!-- Create Task Dialog -->
+    <el-dialog v-model="showCreateTaskDialog" title="创建采集任务" width="500px" @close="resetTaskForm">
+      <el-form :model="taskForm" label-width="100px" label-position="left">
+        <el-form-item label="任务类型">
+          <el-select v-model="taskForm.task_type" style="width: 100%">
+            <el-option label="用户资料" value="user_profile" />
+            <el-option label="用户作品" value="user_works" />
+            <el-option label="全量采集" value="user_all" />
+            <el-option label="喜欢列表" value="user_likes" />
+            <el-option label="收藏列表" value="user_favorites" />
+            <el-option label="关注列表" value="user_following" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="执行方式">
+          <el-radio-group v-model="taskForm.task_category">
+            <el-radio value="once">立即执行</el-radio>
+            <el-radio value="scheduled">定时执行</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="taskForm.task_category === 'scheduled'" label="执行间隔">
+          <el-select v-model="taskForm.schedule_interval" style="width: 100%">
+            <el-option label="每小时" value="hourly" />
+            <el-option label="每天" value="daily" />
+            <el-option label="每周" value="weekly" />
+            <el-option label="每月" value="monthly" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="目标用户">
+          <div style="display: flex; gap: 8px;">
+            <el-select
+              v-model="taskForm.target"
+              filterable
+              remote
+              :remote-method="searchUsers"
+              :loading="userSearchLoading"
+              placeholder="搜索或选择用户"
+              style="flex: 1"
+              @visible-change="onSelectVisibleChange"
+            >
+              <el-option
+                v-for="u in userOptions"
+                :key="u.sec_user_id"
+                :label="u.nickname || u.douyin_id || u.sec_user_id"
+                :value="u.sec_user_id"
+              >
+                <div class="user-option">
+                  <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
+                  <div class="user-option-info">
+                    <span class="user-option-name">{{ u.nickname || '-' }}</span>
+                    <span class="user-option-id">{{ u.douyin_id || u.sec_user_id?.slice(0, 18) + '...' }}</span>
+                  </div>
+                </div>
+              </el-option>
+            </el-select>
+            <el-button
+              type="success"
+              plain
+              @click="selectCurrentUser"
+              :loading="currentUserLoading"
+              title="当前登录用户"
+            >
+              我
+            </el-button>
+          </div>
+        </el-form-item>
+
+        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites', 'user_following'].includes(taskForm.task_type)" label="最大采集数量">
+          <el-input-number v-model="taskForm.max_count" :min="1" :max="1000" placeholder="不限制" style="width: 100%" />
+          <span style="font-size: 12px; color: #94a3b8; margin-top: 4px; display: block;">留空则采集全部</span>
+        </el-form-item>
+
+        <el-form-item v-if="['user_works', 'user_all'].includes(taskForm.task_type)" label="采集选项">
+          <el-checkbox-group v-model="taskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox label="refresh_info">更新作品信息（简介、点赞、播放、收藏等）</el-checkbox>
+            <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
+            <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+
+        <el-form-item v-if="taskForm.task_type === 'user_following'" label="关注列表选项">
+          <el-checkbox-group v-model="taskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox value="collect_profile" label="采集用户资料（头像、昵称、简介等）" />
+            <el-checkbox value="recursive" label="递归采集（采集关注用户的关注列表）">
+              <template #default>
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-left: 24px; margin-top: 8px;" v-if="taskForm.sync_types.includes('recursive')">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: #64748b;">递归深度：</span>
+                    <el-input-number v-model="taskForm.recursive_depth" :min="1" :max="3" placeholder="最多3层" style="width: 120px" />
+                    <span style="font-size: 12px; color: #94a3b8;">（1=仅关注，2=关注+关注的朋友，3=再扩展一层）</span>
+                  </div>
+                </div>
+              </template>
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showCreateTaskDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitTask" :loading="submittingTask">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
