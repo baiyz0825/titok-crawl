@@ -303,8 +303,10 @@ class UserScraper:
 
             # Pagination loop
             effective_max = max_pages or 999
-            # Check if there's more data by looking at aweme_list length
-            has_more = len(data.get("aweme_list", [])) > 0 if data else False
+            # Check if there's more data
+            # Strategy: continue if we got data, stop if API returns empty or fails
+            first_page_size = len(data.get("aweme_list", [])) if data else 0
+            has_more = first_page_size > 0
             if on_page:
                 on_page(page_count, effective_max)
 
@@ -317,6 +319,7 @@ class UserScraper:
                 if await engine.detect_captcha(page):
                     resolved = await engine.wait_for_captcha_resolve(page)
                     if not resolved:
+                        logger.warning("Captcha detected and not resolved, stopping pagination")
                         break
 
                 # Scroll to trigger next page
@@ -325,16 +328,31 @@ class UserScraper:
 
                 data = await self.interceptor.wait_for("aweme/favorite", timeout=10)
                 if not data:
+                    logger.warning("No more data received from API, stopping pagination")
                     break
 
                 aweme_list = data.get("aweme_list", [])
                 works = self._parse_works_from_list(aweme_list, sec_user_id)
+
+                # Stop conditions:
+                # 1. Empty array returned → no more data
+                # 2. Significantly fewer items than first page → likely last page
                 if not works:
+                    logger.info("Received empty work list, reached end of likes")
                     break
+
+                # Optional: Check if we got substantially fewer items (might indicate last page)
+                if len(aweme_list) < first_page_size * 0.5:
+                    logger.info(f"Got significantly fewer items ({len(aweme_list)} vs {first_page_size}), likely last page")
+                    # Still process this page, but don't continue after
 
                 all_works.extend(works)
                 page_count += 1
-                has_more = len(aweme_list) > 0
+
+                # Decide whether to continue based on data received
+                # Continue only if we got a reasonable amount of data
+                has_more = len(aweme_list) >= first_page_size * 0.5
+
                 logger.info(f"Likes Page {page_count}: got {len(works)} works (total: {len(all_works)})")
                 if on_page:
                     on_page(page_count, effective_max)
@@ -385,8 +403,9 @@ class UserScraper:
 
             # Pagination loop
             effective_max = max_pages or 999
-            # Check if there's more data by looking at aweme_list length
-            has_more = len(data.get("aweme_list", [])) > 0 if data else False
+            # Check if there's more data
+            first_page_size = len(data.get("aweme_list", [])) if data else 0
+            has_more = first_page_size > 0
             if on_page:
                 on_page(page_count, effective_max)
 
@@ -399,6 +418,7 @@ class UserScraper:
                 if await engine.detect_captcha(page):
                     resolved = await engine.wait_for_captcha_resolve(page)
                     if not resolved:
+                        logger.warning("Captcha detected and not resolved, stopping pagination")
                         break
 
                 # Scroll to trigger next page
@@ -407,16 +427,31 @@ class UserScraper:
 
                 data = await self.interceptor.wait_for("aweme/favorite", timeout=10)
                 if not data:
+                    logger.warning("No more data received from API, stopping pagination")
                     break
 
                 aweme_list = data.get("aweme_list", [])
                 works = self._parse_works_from_list(aweme_list, sec_user_id)
+
+                # Stop conditions:
+                # 1. Empty array returned → no more data
+                # 2. Significantly fewer items than first page → likely last page
                 if not works:
+                    logger.info("Received empty work list, reached end of favorites")
                     break
+
+                # Optional: Check if we got substantially fewer items (might indicate last page)
+                if len(aweme_list) < first_page_size * 0.5:
+                    logger.info(f"Got significantly fewer items ({len(aweme_list)} vs {first_page_size}), likely last page")
+                    # Still process this page, but don't continue after
 
                 all_works.extend(works)
                 page_count += 1
-                has_more = len(aweme_list) > 0
+
+                # Decide whether to continue based on data received
+                # Continue only if we got a reasonable amount of data
+                has_more = len(aweme_list) >= first_page_size * 0.5
+
                 logger.info(f"Favorites Page {page_count}: got {len(works)} works (total: {len(all_works)})")
                 if on_page:
                     on_page(page_count, effective_max)
