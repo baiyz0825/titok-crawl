@@ -43,8 +43,12 @@ class ResponseInterceptor:
                 pass
 
     async def wait_for(self, pattern: str, timeout: float = 30) -> dict | None:
-        """Wait for an API response matching the given URL pattern."""
+        """Wait for an API response matching the given URL pattern.
+
+        Keeps non-matching items in a temporary buffer to avoid losing them.
+        """
         deadline = asyncio.get_event_loop().time() + timeout
+        temp_buffer = []
 
         while asyncio.get_event_loop().time() < deadline:
             remaining = deadline - asyncio.get_event_loop().time()
@@ -53,11 +57,21 @@ class ResponseInterceptor:
                     self._responses.get(), timeout=min(remaining, 2)
                 )
                 if pattern in item["url"]:
+                    # Found matching API - return it and put back buffered items
+                    for buffered_item in temp_buffer:
+                        await self._responses.put(buffered_item)
+                    logger.debug(f"Found matching API: {pattern}")
                     return item["data"]
-                # Put non-matching items back? No — other callers may want them.
-                # Instead, store them for later retrieval.
+                else:
+                    # Buffer non-matching items
+                    temp_buffer.append(item)
+                    logger.debug(f"Buffered non-matching API: {item['url'][:80]}...")
             except asyncio.TimeoutError:
                 continue
+
+        # Put back all buffered items before timeout
+        for buffered_item in temp_buffer:
+            await self._responses.put(buffered_item)
 
         logger.warning(f"Timeout waiting for API pattern: {pattern}")
         return None
