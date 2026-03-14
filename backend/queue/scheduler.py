@@ -44,11 +44,20 @@ class TaskScheduler:
 
     async def submit(self, task_type: str, target: str, **params) -> int:
         """Submit a new task. Returns task_id."""
+        # Extract scheduled task parameters
+        is_scheduled = params.pop("is_scheduled", False)
+        schedule_interval = params.pop("schedule_interval", None)
+        next_run_at = params.pop("next_run_at", None)
+        priority = params.pop("priority", 0) if "priority" in params else 0
+
         task = Task(
             task_type=task_type,
             target=target,
             params=json.dumps(params, ensure_ascii=False) if params else None,
-            priority=params.pop("priority", 0) if "priority" in params else 0,
+            priority=priority,
+            is_scheduled=is_scheduled,
+            schedule_interval=schedule_interval,
+            next_run_at=datetime.fromisoformat(next_run_at) if next_run_at else None,
         )
         task_id = await crud.create_task(task)
         logger.info(f"Task submitted: #{task_id} {task_type} -> {target}")

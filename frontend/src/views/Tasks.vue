@@ -28,9 +28,10 @@
       <el-table :data="tasks" v-loading="loading" @selection-change="(val: any[]) => selectedTasks = val" style="width: 100%">
         <el-table-column type="selection" width="44" />
         <el-table-column prop="id" label="#" width="56" class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
-        <el-table-column prop="task_type" label="类型" width="110">
+        <el-table-column label="类型" width="110">
           <template #default="{ row }">
             <el-tag size="small" round>{{ typeLabel(row.task_type) }}</el-tag>
+            <el-tag v-if="row.is_scheduled" size="small" type="warning" style="margin-left: 4px">定时</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
@@ -117,6 +118,22 @@
             <el-option label="喜欢列表" value="user_likes" />
             <el-option label="收藏列表" value="user_favorites" />
             <el-option label="关注列表" value="user_following" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="执行方式">
+          <el-radio-group v-model="form.task_category">
+            <el-radio value="once">立即执行</el-radio>
+            <el-radio value="scheduled">定时执行</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="form.task_category === 'scheduled'" label="执行间隔">
+          <el-select v-model="form.schedule_interval" style="width: 100%">
+            <el-option label="每小时" value="hourly" />
+            <el-option label="每天" value="daily" />
+            <el-option label="每周" value="weekly" />
+            <el-option label="每月" value="monthly" />
           </el-select>
         </el-form-item>
 
@@ -220,6 +237,8 @@ const showCreateDialog = ref(false)
 const submitting = ref(false)
 const form = ref({
   task_type: 'user_profile',
+  task_category: 'once',
+  schedule_interval: 'daily',
   target: '',
   max_pages: undefined,
   max_count: undefined,
@@ -322,7 +341,11 @@ async function createTask() {
   try {
     const params: any = {
       task_type: form.value.task_type,
-      target: form.value.target
+      target: form.value.target,
+      is_scheduled: form.value.task_category === 'scheduled'
+    }
+    if (form.value.task_category === 'scheduled') {
+      params.schedule_interval = form.value.schedule_interval
     }
     if (form.value.max_pages) params.max_pages = form.value.max_pages
     if (form.value.max_count) params.max_count = form.value.max_count
@@ -359,6 +382,8 @@ async function createTask() {
 function resetForm() {
   form.value = {
     task_type: 'user_profile',
+    task_category: 'once',
+    schedule_interval: 'daily',
     target: '',
     max_pages: undefined,
     max_count: undefined,

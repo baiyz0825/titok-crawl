@@ -68,6 +68,9 @@ class Task(BaseModel):
     error_message: str | None = None
     retry_count: int = 0
     max_retries: int = 3
+    is_scheduled: bool = False  # Whether this is a recurring scheduled task
+    schedule_interval: int | None = None  # Interval in minutes for recurring tasks
+    next_run_at: datetime | None = None  # Next scheduled run time
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -97,18 +100,6 @@ class Comment(BaseModel):
     create_time: datetime | None = None
     ip_label: str | None = None
     extra_data: str | None = None
-    created_at: datetime | None = None
-
-
-class Schedule(BaseModel):
-    id: int | None = None
-    sec_user_id: str
-    nickname: str | None = None
-    sync_type: str = "all"  # profile, works, all
-    interval_minutes: int = 1440  # default 24h
-    enabled: bool = True
-    last_run_at: datetime | None = None
-    next_run_at: datetime | None = None
     created_at: datetime | None = None
 
 

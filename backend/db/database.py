@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     error_message TEXT,
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
+    is_scheduled BOOLEAN DEFAULT FALSE,
+    schedule_interval INTEGER,
+    next_run_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP,
     completed_at TIMESTAMP
@@ -106,19 +109,6 @@ CREATE TABLE IF NOT EXISTS comments (
     FOREIGN KEY (aweme_id) REFERENCES works(aweme_id)
 );
 
-CREATE TABLE IF NOT EXISTS schedules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sec_user_id TEXT NOT NULL,
-    nickname TEXT,
-    sync_type TEXT NOT NULL DEFAULT 'all' CHECK(sync_type IN ('profile', 'works', 'all')),
-    interval_minutes INTEGER NOT NULL DEFAULT 1440,
-    enabled BOOLEAN DEFAULT TRUE,
-    last_run_at TIMESTAMP,
-    next_run_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sec_user_id) REFERENCES users(sec_user_id)
-);
-
 CREATE TABLE IF NOT EXISTS favorites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     aweme_id TEXT UNIQUE NOT NULL,
@@ -148,6 +138,9 @@ class Database:
         migrations = [
             ("comments", "reply_to", "ALTER TABLE comments ADD COLUMN reply_to TEXT"),
             ("works", "transcript", "ALTER TABLE works ADD COLUMN transcript TEXT"),
+            ("tasks", "is_scheduled", "ALTER TABLE tasks ADD COLUMN is_scheduled BOOLEAN DEFAULT 0"),
+            ("tasks", "schedule_interval", "ALTER TABLE tasks ADD COLUMN schedule_interval INTEGER"),
+            ("tasks", "next_run_at", "ALTER TABLE tasks ADD COLUMN next_run_at TIMESTAMP"),
         ]
         for table, column, sql in migrations:
             cursor = await self._conn.execute(f"PRAGMA table_info({table})")

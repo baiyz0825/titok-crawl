@@ -27,6 +27,9 @@ class CreateTaskRequest(BaseModel):
     max_count: int | None = None
     download_media: bool = False
     priority: int = 0
+    is_scheduled: bool = False
+    schedule_interval: int | None = None
+    next_run_at: str | None = None  # ISO format timestamp
 
 
 @router.get("")
@@ -70,7 +73,10 @@ async def create_task(req: CreateTaskRequest):
         "max_pages": req.max_pages,
         "max_count": req.max_count,
         "download_media": req.download_media,
-        "priority": req.priority
+        "priority": req.priority,
+        "is_scheduled": req.is_scheduled,
+        "schedule_interval": req.schedule_interval,
+        "next_run_at": req.next_run_at
     }
     # Remove None values
     params = {k: v for k, v in params.items() if v is not None}
