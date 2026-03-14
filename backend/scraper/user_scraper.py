@@ -346,19 +346,23 @@ class UserScraper:
                 # Improved scrolling strategy: scroll gradually to trigger lazy loading
                 logger.info("Scrolling to load more content...")
 
-                # Method 1: Scroll to bottom
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(1500)
+                # Method 1: Scroll to near bottom (not absolute bottom to avoid premature stop)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight - 500)")
+                await page.wait_for_timeout(2000)
 
-                # Method 2: Small incremental scroll
-                await page.evaluate("window.scrollBy(0, 500)")
-                await page.wait_for_timeout(500)
-
-                # Method 3: Scroll to bottom again
+                # Method 2: Scroll to absolute bottom
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await page.wait_for_timeout(2000)
 
-                data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
+                # Method 3: Small incremental scroll to trigger lazy loading
+                await page.evaluate("window.scrollBy(0, 300)")
+                await page.wait_for_timeout(1000)
+
+                # Method 4: Scroll back to bottom
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(3000)  # Longer wait for API to respond
+
+                data = await self.interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
                 if not data:
                     logger.warning("No more data received from API, stopping pagination")
                     break
@@ -462,19 +466,23 @@ class UserScraper:
                 # Improved scrolling strategy: scroll gradually to trigger lazy loading
                 logger.info("Scrolling to load more content...")
 
-                # Method 1: Scroll to bottom
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(1500)
+                # Method 1: Scroll to near bottom (not absolute bottom to avoid premature stop)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight - 500)")
+                await page.wait_for_timeout(2000)
 
-                # Method 2: Small incremental scroll
-                await page.evaluate("window.scrollBy(0, 500)")
-                await page.wait_for_timeout(500)
-
-                # Method 3: Scroll to bottom again
+                # Method 2: Scroll to absolute bottom
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await page.wait_for_timeout(2000)
 
-                data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
+                # Method 3: Small incremental scroll to trigger lazy loading
+                await page.evaluate("window.scrollBy(0, 300)")
+                await page.wait_for_timeout(1000)
+
+                # Method 4: Scroll back to bottom
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(3000)  # Longer wait for API to respond
+
+                data = await self.interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
                 if not data:
                     logger.warning("No more data received from API, stopping pagination")
                     break
