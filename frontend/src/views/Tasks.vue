@@ -16,6 +16,26 @@
             <el-option label="已完成" value="completed" />
             <el-option label="失败" value="failed" />
           </el-select>
+          <el-select v-model="typeFilter" clearable placeholder="全部类型" style="width: 140px" @change="fetchTasks">
+            <el-option label="用户资料" value="user_profile" />
+            <el-option label="用户作品" value="user_works" />
+            <el-option label="全量采集" value="user_all" />
+            <el-option label="喜欢列表" value="user_likes" />
+            <el-option label="收藏列表" value="user_favorites" />
+            <el-option label="关注列表" value="user_following" />
+            <el-option label="搜索" value="search" />
+          </el-select>
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            style="width: 240px"
+            @change="fetchTasks"
+            clearable
+          />
           <el-tag v-if="selectedTasks.length" type="info" round>已选 {{ selectedTasks.length }}</el-tag>
         </div>
         <div class="toolbar-right">
@@ -331,6 +351,8 @@ const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
 const statusFilter = ref('')
+const typeFilter = ref('')
+const dateRange = ref<[string, string] | null>(null)
 const progressMap = ref<Record<number, any>>({})
 const selectedTasks = ref<any[]>([])
 let refreshTimer: ReturnType<typeof setInterval>
@@ -396,6 +418,11 @@ async function fetchTasks() {
   loading.value = true
   const params: any = { page: page.value, size: pageSize }
   if (statusFilter.value) params.status = statusFilter.value
+  if (typeFilter.value) params.task_type = typeFilter.value
+  if (dateRange.value && dateRange.value.length === 2) {
+    params.start_date = dateRange.value[0]
+    params.end_date = dateRange.value[1]
+  }
   const res: any = await client.get('/tasks', { params })
   tasks.value = res.items
   total.value = res.total

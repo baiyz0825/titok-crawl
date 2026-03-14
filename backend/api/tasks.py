@@ -39,10 +39,29 @@ class CreateTaskRequest(BaseModel):
 
 
 @router.get("")
-async def list_tasks(status: str | None = None, page: int = 1, size: int = 20):
-    """List tasks with optional status filter."""
-    tasks = await crud.get_tasks(status=status, page=page, size=size)
-    total = await crud.count_tasks(status=status)
+async def list_tasks(
+    status: str | None = None,
+    task_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    page: int = 1,
+    size: int = 20
+):
+    """List tasks with optional filters."""
+    tasks = await crud.get_tasks(
+        status=status,
+        task_type=task_type,
+        start_date=start_date,
+        end_date=end_date,
+        page=page,
+        size=size
+    )
+    total = await crud.count_tasks(
+        status=status,
+        task_type=task_type,
+        start_date=start_date,
+        end_date=end_date
+    )
     return {
         "items": [t.model_dump() for t in tasks],
         "total": total,

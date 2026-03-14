@@ -314,12 +314,28 @@ async def get_task(task_id: int) -> Task | None:
     return Task(**dict(row))
 
 
-async def get_tasks(status: str | None = None, page: int = 1, size: int = 20) -> list[Task]:
+async def get_tasks(
+    status: str | None = None,
+    task_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    page: int = 1,
+    size: int = 20
+) -> list[Task]:
     conditions = []
     params: list = []
     if status:
         conditions.append("status = ?")
         params.append(status)
+    if task_type:
+        conditions.append("task_type = ?")
+        params.append(task_type)
+    if start_date:
+        conditions.append("created_at >= ?")
+        params.append(start_date)
+    if end_date:
+        conditions.append("created_at <= ?")
+        params.append(end_date + " 23:59:59")
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     offset = (page - 1) * size
     cursor = await db.conn.execute(
@@ -346,11 +362,28 @@ async def reset_running_tasks():
     await db.conn.commit()
 
 
-async def count_tasks(status: str | None = None) -> int:
+async def count_tasks(
+    status: str | None = None,
+    task_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None
+) -> int:
+    conditions = []
+    params: list = []
     if status:
-        cursor = await db.conn.execute("SELECT COUNT(*) FROM tasks WHERE status = ?", (status,))
-    else:
-        cursor = await db.conn.execute("SELECT COUNT(*) FROM tasks")
+        conditions.append("status = ?")
+        params.append(status)
+    if task_type:
+        conditions.append("task_type = ?")
+        params.append(task_type)
+    if start_date:
+        conditions.append("created_at >= ?")
+        params.append(start_date)
+    if end_date:
+        conditions.append("created_at <= ?")
+        params.append(end_date + " 23:59:59")
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    cursor = await db.conn.execute(f"SELECT COUNT(*) FROM tasks{where}", params)
     row = await cursor.fetchone()
     return row[0]
 
