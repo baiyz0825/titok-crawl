@@ -289,9 +289,11 @@ async def count_media_files() -> int:
 
 async def create_task(task: Task) -> int:
     cursor = await db.conn.execute(
-        """INSERT INTO tasks (task_type, target, params, status, priority, max_retries)
-        VALUES (?, ?, ?, ?, ?, ?)""",
-        (task.task_type, task.target, task.params, task.status, task.priority, task.max_retries),
+        """INSERT INTO tasks (task_type, target, params, status, priority, max_retries, is_scheduled, schedule_interval, next_run_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (task.task_type, task.target, task.params, task.status, task.priority, task.max_retries,
+         task.is_scheduled, task.schedule_interval,
+         task.next_run_at.isoformat() if task.next_run_at else None),
     )
     await db.conn.commit()
     return cursor.lastrowid

@@ -6,42 +6,63 @@ This script:
 2. Creates corresponding tasks with is_scheduled=True
 3. Sets up the next_run_at based on interval_minutes
 4. Can be safely run multiple times (idempotent)
+
+Usage: cd /path/to/titok-crawl && python backend/db/migrations/merge_schedules.py
 """
 import asyncio
+import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from backend.db.database import db
-
-
-async def migrate_schedules_to_tasks():
+def migrate_schedules_to_tasks():
     """Migrate existing schedules to scheduled tasks."""
-    await db.connect()
+    # Add parent directory to path
+    project_root = Path(__file__).parent.parent.parent.parent
+    db_path = project_root / "data" / "db" / "douyin.db"
 
-    print("Starting migration: schedules -> tasks")
-
-    # Check if schedules table exists
-    cursor = await db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'"
-    )
-    if not await cursor.fetchone():
-        print("No schedules table found - skipping migration")
-        await db.close()
+    if not db_path.exists():
+        print(f"Database not found at {db_path}")
         return
 
-    # Get all enabled schedules
-    cursor = await db.conn.execute(
-        "SELECT * FROM schedules WHERE enabled = 1"
+    print(f"Using database: {db_path}")
+    print("Starting migration: schedules -> tasks")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # Check if schedules table exists
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'"
     )
-    schedules = await cursor.fetchall()
+    if not cursor.fetchone():
+        print("No schedules table found - skipping migration")
+        conn.close()
+        return
+
+    # Check if tasks table has new columns
+    cursor.execute("PRAGMA table_info(tasks)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'is_scheduled' not in columns:
+        print("Tasks table missing is_scheduled column - adding it")
+        cursor.execute("ALTER TABLE tasks ADD COLUMN is_scheduled BOOLEAN DEFAULT 0")
+    if 'schedule_interval' not in columns:
+        print("Tasks table missing schedule_interval column - adding it")
+        cursor.execute("ALTER TABLE tasks ADD COLUMN schedule_interval INTEGER")
+    if 'next_run_at' not in columns:
+        print("Tasks table missing next_run_at column - adding it")
+        cursor.execute("ALTER TABLE tasks ADD COLUMN next_run_at TIMESTAMP")
+    conn.commit()
+
+    # Get all enabled schedules
+    cursor.execute("SELECT * FROM schedules WHERE enabled = 1")
+    schedules = cursor.fetchall()
 
     if not schedules:
         print("No enabled schedules found - skipping migration")
-        await db.close()
+        conn.close()
         return
 
     print(f"Found {len(schedules)} schedules to migrate")
@@ -57,12 +78,12 @@ async def migrate_schedules_to_tasks():
         last_run_at = schedule_dict.get('last_run_at')
 
         # Check if we already migrated this schedule
-        cursor = await db.conn.execute(
+        cursor.execute(
             """SELECT id FROM tasks
-            WHERE target = ? AND task_type = ? AND is_scheduled = 1""",
-            (sec_user_id, f"user_{sync_type}")
+            WHERE target = ? AND is_scheduled = 1""",
+            (sec_user_id,)
         )
-        existing = await cursor.fetchone()
+        existing = cursor.fetchone()
 
         if existing:
             print(f"  Schedule {schedule_id} already migrated (task #{existing[0]})")
@@ -78,18 +99,22 @@ async def migrate_schedules_to_tasks():
 
         # Calculate next_run_at
         if last_run_at:
-            next_run = datetime.fromisoformat(last_run_at) + timedelta(minutes=interval_minutes)
+            try:
+                last_run_dt = datetime.fromisoformat(last_run_at)
+                next_run = last_run_dt + timedelta(minutes=interval_minutes)
+            except:
+                next_run = datetime.now() + timedelta(minutes=interval_minutes)
         else:
             next_run = datetime.now() + timedelta(minutes=interval_minutes)
 
         # Create the scheduled task
-        cursor = await db.conn.execute(
+        cursor.execute(
             """INSERT INTO tasks (task_type, target, is_scheduled, schedule_interval, next_run_at, status)
             VALUES (?, ?, 1, ?, ?, 'pending')""",
             (task_type, sec_user_id, interval_minutes, next_run.isoformat())
         )
         task_id = cursor.lastrowid
-        await db.conn.commit()
+        conn.commit()
 
         migrated_count += 1
         print(f"  Migrated schedule {schedule_id}: {nickname or sec_user_id} -> task #{task_id}")
@@ -98,10 +123,10 @@ async def migrate_schedules_to_tasks():
 
     # Optional: Drop the schedules table after successful migration
     print("\nTo drop the old schedules table, run:")
-    print(f"  sqlite3 {db.db_path} \"DROP TABLE IF EXISTS schedules;\"")
+    print(f"  sqlite3 {db_path} \"DROP TABLE IF EXISTS schedules;\"")
 
-    await db.close()
+    conn.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(migrate_schedules_to_tasks())
+    migrate_schedules_to_tasks()

@@ -51,6 +51,7 @@
         <div class="toolbar-right">
           <el-tag v-if="selectedWorks.length" type="info" round>已选 {{ selectedWorks.length }}</el-tag>
           <el-button v-if="selectedWorks.length" type="danger" plain @click="batchDeleteWorks">删除选中</el-button>
+          <el-button type="primary" plain @click="openCreateTaskDialog">采集更多</el-button>
           <el-button @click="fetchWorks" :loading="loading">刷新</el-button>
         </div>
       </div>
