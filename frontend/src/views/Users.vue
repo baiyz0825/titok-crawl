@@ -351,6 +351,76 @@ async function doDelete() {
   fetchUsers()
 }
 
+// Batch task creation methods
+function batchCreateTasks() {
+  if (selectedUsers.value.length === 0) return
+  batchTaskForm.value = {
+    task_type: 'user_profile',
+    task_category: 'once',
+    schedule_interval: 'daily',
+    max_count: undefined,
+    sync_types: [],
+    recursive_depth: 1
+  }
+  showBatchTaskDialog.value = true
+}
+
+async function submitBatchTasks() {
+  if (selectedUsers.value.length === 0) return
+
+  submittingBatchTasks.value = true
+  let successCount = 0
+  let failCount = 0
+
+  try {
+    for (const user of selectedUsers.value) {
+      try {
+        const params: any = {
+          task_type: batchTaskForm.value.task_type,
+          target: user.sec_user_id,
+          is_scheduled: batchTaskForm.value.task_category === 'scheduled'
+        }
+        if (batchTaskForm.value.task_category === 'scheduled') {
+          params.schedule_interval = batchTaskForm.value.schedule_interval
+        }
+        if (batchTaskForm.value.max_count) params.max_count = batchTaskForm.value.max_count
+
+        // 处理采集选项
+        if (batchTaskForm.value.sync_types.includes('refresh_info')) {
+          params.refresh_info = true
+        }
+        if (batchTaskForm.value.sync_types.includes('scrape_comments')) {
+          params.scrape_comments = true
+        }
+        if (batchTaskForm.value.sync_types.includes('download_media')) {
+          params.download_media = true
+        }
+        if (batchTaskForm.value.sync_types.includes('collect_profile')) {
+          params.collect_profile = true
+        }
+        if (batchTaskForm.value.sync_types.includes('recursive')) {
+          params.recursive = true
+          params.recursive_depth = batchTaskForm.value.recursive_depth || 1
+        }
+
+        await client.post('/tasks', params)
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+
+    if (successCount > 0) {
+      ElMessage.success(`成功创建 ${successCount} 个任务${failCount > 0 ? `，${failCount} 个失败` : ''}`)
+      showBatchTaskDialog.value = false
+    } else {
+      ElMessage.error('创建任务失败')
+    }
+  } finally {
+    submittingBatchTasks.value = false
+  }
+}
+
 onMounted(fetchUsers)
 </script>
 
