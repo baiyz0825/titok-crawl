@@ -70,7 +70,7 @@ class TaskWorker:
 
         # Wrap scrape_works to track page progress
         works = await self.user_scraper.scrape_works(
-            sec_user_id, max_count=max_count,
+            task_id, sec_user_id, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
@@ -173,7 +173,7 @@ class TaskWorker:
         scrape_comments = params.get("scrape_comments", False)
         refresh_info = params.get("refresh_info", False)
         works = await self.user_scraper.scrape_works(
-            sec_user_id, max_count=max_count,
+            task_id, sec_user_id, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.2 + 0.4 * page_num / max(total, 1), 0.6),
@@ -357,7 +357,7 @@ class TaskWorker:
         progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
 
         works = await self.user_scraper.scrape_likes(
-            sec_user_id, max_pages=max_pages,
+            task_id, sec_user_id, max_pages=max_pages,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
@@ -428,7 +428,7 @@ class TaskWorker:
         progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
 
         works = await self.user_scraper.scrape_favorites(
-            sec_user_id, max_pages=max_pages,
+            task_id, sec_user_id, max_pages=max_pages,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
@@ -520,7 +520,7 @@ class TaskWorker:
 
             # Get following list for this user
             following_users = await self.user_scraper.scrape_following(
-                target_id, max_count=None,  # No limit per user
+                task_id, target_id, max_count=None,  # No limit per user
                 on_page=None
             )
 

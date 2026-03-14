@@ -15,6 +15,7 @@ class Settings:
     # Playwright browser
     HEADLESS = os.environ.get("HEADLESS", "false").lower() in ("true", "1", "yes")
     BROWSER_DATA_DIR = DATA_DIR / "browser"
+    PAGE_TIMEOUT = 30000  # 30 seconds default timeout for page operations
 
     # Request control
     MIN_DELAY = 3.0

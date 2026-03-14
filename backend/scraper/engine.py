@@ -31,6 +31,10 @@ class ScraperEngine:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._captcha_active: bool = False
+        # Page pool: one page per concurrent task
+        self._page_pool: dict[int, Page] = {}  # task_id -> Page
+        self._page_locks: dict[int, asyncio.Lock] = {}  # task_id -> Lock
+        self._pool_lock = asyncio.Lock()  # Protects access to _page_pool and _page_locks
 
     @property
     def captcha_active(self) -> bool:
@@ -109,17 +113,70 @@ class ScraperEngine:
             await self._playwright.stop()
             self._playwright = None
 
-    async def get_page(self) -> Page:
-        """Get an available page, creating a new one for each task to avoid conflicts."""
+    async def acquire_page(self, task_id: int) -> Page:
+        """Acquire a page for a specific task.
+
+        Each task gets its own page that is reused for the entire task duration.
+        Different tasks use different pages to avoid conflicts.
+
+        Args:
+            task_id: Unique identifier for the task (from scheduler)
+
+        Returns:
+            Page: A browser page dedicated to this task
+        """
         if self._context is None:
             raise RuntimeError("Engine not started")
 
-        # Always create a new page for each task to avoid concurrent conflicts
+        async with self._pool_lock:
+            # Check if this task already has a page
+            if task_id in self._page_pool:
+                logger.debug(f"Task #{task_id} reusing existing page")
+                return self._page_pool[task_id]
+
+            # Create new page for this task
+            page = await self._context.new_page()
+            page.set_default_timeout(settings.PAGE_TIMEOUT)
+
+            # Store in pool
+            self._page_pool[task_id] = page
+            self._page_locks[task_id] = asyncio.Lock()
+
+            logger.info(f"Task #{task_id} assigned new page (total pages: {len(self._page_pool)})")
+            return page
+
+    async def release_page(self, task_id: int):
+        """Release and close a page for a specific task.
+
+        Should be called when the task is complete to free resources.
+
+        Args:
+            task_id: Unique identifier for the task
+        """
+        async with self._pool_lock:
+            if task_id not in self._page_pool:
+                logger.warning(f"Task #{task_id} has no page to release")
+                return
+
+            page = self._page_pool.pop(task_id)
+            self._page_locks.pop(task_id, None)
+
+            try:
+                await page.close()
+                logger.info(f"Task #{task_id} page closed (remaining pages: {len(self._page_pool)})")
+            except Exception as e:
+                logger.warning(f"Failed to close page for task #{task_id}: {e}")
+
+    async def get_page(self) -> Page:
+        """Legacy method - creates a new page each time.
+
+        Deprecated: Use acquire_page(task_id) instead for proper page pooling.
+        """
+        if self._context is None:
+            raise RuntimeError("Engine not started")
+
         page = await self._context.new_page()
-
-        # Set default timeout and viewport
         page.set_default_timeout(settings.PAGE_TIMEOUT)
-
         return page
 
     async def new_page(self) -> Page:

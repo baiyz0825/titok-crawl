@@ -152,27 +152,28 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
-            # Close the page to free resources and avoid conflicts
+            # Release the page back to the pool for this task
             try:
-                await page.close()
-                logger.debug("Closed page after scraping")
+                await engine.release_page(task_id)
+                logger.debug(f"Released page for task #{task_id}")
             except Exception as e:
-                logger.warning(f"Failed to close page: {e}")
+                logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_works(
-        self, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
+        self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None,
     ) -> list[Work]:
         """Scrape user's works list with pagination.
 
         Args:
+            task_id: Unique task identifier for page management
             sec_user_id: User ID to scrape
             max_pages: Maximum number of pages to scrape (deprecated, use max_count)
             max_count: Maximum number of works to scrape
             on_page: Callback function(page_num, total_pages) for progress tracking
         """
         logger.info(f"Starting scrape_works for {sec_user_id}, max_pages={max_pages}, max_count={max_count}")
-        page = await engine.get_page()
+        page = await engine.acquire_page(task_id)
         self.interceptor.clear()
         await self.interceptor.setup(page)
         logger.info(f"Interceptor setup complete for {sec_user_id}")
@@ -268,19 +269,19 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
-            # Close the page to free resources and avoid conflicts
+            # Release the page back to the pool for this task
             try:
-                await page.close()
-                logger.debug("Closed page after scraping")
+                await engine.release_page(task_id)
+                logger.debug(f"Released page for task #{task_id}")
             except Exception as e:
-                logger.warning(f"Failed to close page: {e}")
+                logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_likes(
-        self, sec_user_id: str, max_pages: int | None = None,
+        self, task_id: int, sec_user_id: str, max_pages: int | None = None,
         on_page: Callable | None = None,
     ) -> list[Work]:
         """Scrape current user's liked videos (喜欢) with pagination."""
-        page = await engine.get_page()
+        page = await engine.acquire_page(task_id)
         self.interceptor.clear()
         await self.interceptor.setup(page)
 
@@ -385,19 +386,19 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
-            # Close the page to free resources and avoid conflicts
+            # Release the page back to the pool for this task
             try:
-                await page.close()
-                logger.debug("Closed page after scraping")
+                await engine.release_page(task_id)
+                logger.debug(f"Released page for task #{task_id}")
             except Exception as e:
-                logger.warning(f"Failed to close page: {e}")
+                logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_favorites(
-        self, sec_user_id: str, max_pages: int | None = None,
+        self, task_id: int, sec_user_id: str, max_pages: int | None = None,
         on_page: Callable | None = None,
     ) -> list[Work]:
         """Scrape current user's favorite videos (收藏) with pagination."""
-        page = await engine.get_page()
+        page = await engine.acquire_page(task_id)
         self.interceptor.clear()
         await self.interceptor.setup(page)
 
@@ -501,15 +502,15 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
-            # Close the page to free resources and avoid conflicts
+            # Release the page back to the pool for this task
             try:
-                await page.close()
-                logger.debug("Closed page after scraping")
+                await engine.release_page(task_id)
+                logger.debug(f"Released page for task #{task_id}")
             except Exception as e:
-                logger.warning(f"Failed to close page: {e}")
+                logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_following(
-        self, sec_user_id: str, max_count: int | None = None,
+        self, task_id: int, sec_user_id: str, max_count: int | None = None,
         on_page: Callable | None = None,
     ) -> list[dict]:
         """Scrape user's following list with pagination.
@@ -520,7 +521,7 @@ class UserScraper:
         - avatar_url
         - douyin_id
         """
-        page = await engine.get_page()
+        page = await engine.acquire_page(task_id)
         self.interceptor.clear()
         await self.interceptor.setup(page)
 
@@ -624,12 +625,12 @@ class UserScraper:
 
         finally:
             await self.interceptor.teardown()
-            # Close the page to free resources and avoid conflicts
+            # Release the page back to the pool for this task
             try:
-                await page.close()
-                logger.debug("Closed page after scraping")
+                await engine.release_page(task_id)
+                logger.debug(f"Released page for task #{task_id}")
             except Exception as e:
-                logger.warning(f"Failed to close page: {e}")
+                logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     def _parse_user(self, user_info: dict, sec_user_id: str) -> User:
         """Parse user info from API response."""

@@ -36,13 +36,17 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     logger.info("Task scheduler started")
 
-    # Start MCP SSE server in background
-    mcp_task = asyncio.create_task(_start_mcp_server())
+    # Start MCP SSE server in background (only in main process, not reload workers)
+    import os
+    mcp_task = None
+    if not os.environ.get("UVICORN_WORKER"):
+        mcp_task = asyncio.create_task(_start_mcp_server())
 
     yield
 
     # Shutdown
-    mcp_task.cancel()
+    if mcp_task:
+        mcp_task.cancel()
     await scheduler.stop()
     await engine.stop()
     await db.close()
