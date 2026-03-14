@@ -78,9 +78,10 @@
         <el-table-column prop="created_at" label="创建时间" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }"><span class="text-muted">{{ formatDate(row.created_at) }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right" class-name="col-action" label-class-name="col-action">
+        <el-table-column label="操作" width="220" fixed="right" class-name="col-action" label-class-name="col-action">
           <template #default="{ row }">
             <div class="action-btns">
+              <el-button v-if="['completed', 'failed'].includes(row.status)" size="small" type="info" text @click="showTaskDetail(row)">详情</el-button>
               <el-button v-if="row.status === 'pending'" size="small" type="warning" plain @click="prioritize(row.id)">插队</el-button>
               <el-button v-if="row.status === 'running'" size="small" plain @click="pauseTask(row.id)">暂停</el-button>
               <el-button v-if="row.status === 'paused'" size="small" type="success" plain @click="resumeTask(row.id)">继续</el-button>
@@ -223,6 +224,98 @@
         <el-button type="primary" @click="createTask" :loading="submitting">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 任务详情对话框 -->
+    <el-dialog v-model="showDetailDialog" title="任务详情" width="600px">
+      <div v-if="currentTask" class="task-detail">
+        <div class="detail-section">
+          <div class="detail-row">
+            <span class="detail-label">任务 ID：</span>
+            <span class="detail-value">{{ currentTask.id }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">任务类型：</span>
+            <span class="detail-value">{{ typeLabel(currentTask.task_type) }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">目标：</span>
+            <span class="detail-value text-muted">{{ currentTask.target }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">状态：</span>
+            <el-tag v-if="currentTask.status === 'completed'" type="success">完成</el-tag>
+            <el-tag v-else-if="currentTask.status === 'failed'" type="danger">失败</el-tag>
+            <el-tag v-else-if="currentTask.status === 'running'" type="primary">运行中</el-tag>
+            <el-tag v-else-if="currentTask.status === 'pending'" type="info">等待中</el-tag>
+            <el-tag v-else>{{ currentTask.status }}</el-tag>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">创建时间：</span>
+            <span class="detail-value">{{ currentTask.created_at || '-' }}</span>
+          </div>
+          <div v-if="currentTask.started_at" class="detail-row">
+            <span class="detail-label">开始时间：</span>
+            <span class="detail-value">{{ currentTask.started_at }}</span>
+          </div>
+          <div v-if="currentTask.completed_at" class="detail-row">
+            <span class="detail-label">完成时间：</span>
+            <span class="detail-value">{{ currentTask.completed_at }}</span>
+          </div>
+        </div>
+
+        <div v-if="parsedResult" class="detail-section">
+          <div class="section-title">执行结果</div>
+          <div class="result-stats">
+            <div v-if="parsedResult.count !== undefined" class="stat-item">
+              <span class="stat-label">作品总数</span>
+              <span class="stat-value">{{ parsedResult.count }}</span>
+            </div>
+            <div v-if="parsedResult.new !== undefined" class="stat-item">
+              <span class="stat-label">新增作品</span>
+              <span class="stat-value success">{{ parsedResult.new }}</span>
+            </div>
+            <div v-if="parsedResult.updated !== undefined" class="stat-item">
+              <span class="stat-label">更新作品</span>
+              <span class="stat-value info">{{ parsedResult.updated }}</span>
+            </div>
+            <div v-if="parsedResult.refreshed_count" class="stat-item">
+              <span class="stat-label">刷新作品</span>
+              <span class="stat-value info">{{ parsedResult.refreshed_count }}</span>
+            </div>
+            <div v-if="parsedResult.comments_count" class="stat-item">
+              <span class="stat-label">评论数量</span>
+              <span class="stat-value">{{ parsedResult.comments_count }}</span>
+            </div>
+            <div v-if="parsedResult.media_downloaded" class="stat-item">
+              <span class="stat-label">下载媒体</span>
+              <span class="stat-value success">{{ parsedResult.media_downloaded }}</span>
+            </div>
+            <div v-if="parsedResult.creators_collected" class="stat-item">
+              <span class="stat-label">采集作者</span>
+              <span class="stat-value success">{{ parsedResult.creators_collected }}</span>
+            </div>
+            <div v-if="parsedResult.total !== undefined && parsedResult.works_count === undefined" class="stat-item">
+              <span class="stat-label">用户总数</span>
+              <span class="stat-value">{{ parsedResult.total }}</span>
+            </div>
+            <div v-if="parsedResult.types" class="stat-item">
+              <span class="stat-label">视频/图文</span>
+              <span class="stat-value">{{ parsedResult.types.video || 0 }} / {{ parsedResult.types.note || 0 }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="currentTask.error_message" class="detail-section error-section">
+          <div class="section-title">错误信息</div>
+          <div class="error-message">{{ currentTask.error_message }}</div>
+        </div>
+
+        <div v-if="currentTask.params" class="detail-section">
+          <div class="section-title">任务参数</div>
+          <pre class="params-json">{{ formatParams(currentTask.params) }}</pre>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -256,6 +349,11 @@ const form = ref({
   sync_types: [] as string[],
   recursive_depth: 1
 })
+
+// 任务详情相关
+const showDetailDialog = ref(false)
+const currentTask = ref<any>(null)
+const parsedResult = ref<any>(null)
 const userOptions = ref<any[]>([])
 const userSearchLoading = ref(false)
 const currentUser = ref<any>(null)
@@ -417,6 +515,26 @@ function resetForm() {
   }
 }
 
+function showTaskDetail(task: any) {
+  currentTask.value = task
+  try {
+    parsedResult.value = task.result ? JSON.parse(task.result) : null
+  } catch {
+    parsedResult.value = null
+  }
+  showDetailDialog.value = true
+}
+
+function formatParams(params: any) {
+  if (!params) return ''
+  try {
+    const parsed = typeof params === 'string' ? JSON.parse(params) : params
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return params
+  }
+}
+
 function startProgressSSE() {
   eventSource = new EventSource('/api/tasks/progress/stream')
   eventSource.onmessage = (event) => { progressMap.value[JSON.parse(event.data).task_id] = JSON.parse(event.data) }
@@ -482,4 +600,22 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 .user-option-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .user-option-name { font-size: 13px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-option-id { font-size: 11px; color: #94a3b8; }
+
+/* 任务详情对话框样式 */
+.task-detail { display: flex; flex-direction: column; gap: 16px; }
+.detail-section { background: #f8fafc; border-radius: 8px; padding: 16px; }
+.detail-row { display: flex; align-items: center; margin-bottom: 8px; }
+.detail-row:last-child { margin-bottom: 0; }
+.detail-label { font-size: 13px; color: #64748b; width: 80px; flex-shrink: 0; }
+.detail-value { font-size: 13px; color: #1e293b; font-weight: 500; }
+.section-title { font-size: 14px; font-weight: 600; color: #1e293b; margin-bottom: 12px; }
+.result-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.stat-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: white; border-radius: 6px; }
+.stat-label { font-size: 12px; color: #64748b; }
+.stat-value { font-size: 14px; font-weight: 600; color: #1e293b; }
+.stat-value.success { color: #10b981; }
+.stat-value.info { color: #3b82f6; }
+.error-section { background: #fef2f2 !important; }
+.error-message { font-size: 13px; color: #dc2626; white-space: pre-wrap; word-break: break-word; }
+.params-json { font-size: 12px; color: #475569; background: white; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0; }
 </style>
