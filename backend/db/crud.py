@@ -44,10 +44,18 @@ async def get_user(sec_user_id: str) -> User | None:
     return User(**dict(row))
 
 
-async def get_users(page: int = 1, size: int = 20, order_by: str = "updated_at DESC") -> list[User]:
+async def get_users(page: int = 1, size: int = 20, sort_by: str = "updated_at", sort_order: str = "DESC") -> list[User]:
+    """Get users with pagination and sorting."""
+    allowed_sort_by = {"updated_at", "nickname", "follower_count", "total_favorited", "aweme_count"}
+    if sort_by not in allowed_sort_by:
+        sort_by = "updated_at"
+    if sort_order.upper() not in ("ASC", "DESC"):
+        sort_order = "DESC"
+
     offset = (page - 1) * size
     cursor = await db.conn.execute(
-        f"SELECT * FROM users ORDER BY {order_by} LIMIT ? OFFSET ?", (size, offset)
+        f"SELECT * FROM users ORDER BY {sort_by} {sort_order.upper()} LIMIT ? OFFSET ?",
+        (size, offset)
     )
     rows = await cursor.fetchall()
     return [User(**dict(r)) for r in rows]
@@ -67,6 +75,44 @@ async def search_users_local(keyword: str, limit: int = 20) -> list[User]:
     )
     rows = await cursor.fetchall()
     return [User(**dict(r)) for r in rows]
+
+
+async def get_delete_preview(sec_user_ids: list[str], cascade: bool) -> dict:
+    """Get preview of what will be deleted."""
+    result = {
+        "users_count": len(sec_user_ids),
+        "works_count": 0,
+        "comments_count": 0,
+        "favorites_count": 0,
+    }
+
+    if not cascade:
+        return result
+
+    placeholders = ",".join("?" * len(sec_user_ids))
+
+    # Count works
+    cursor = await db.conn.execute(
+        f"SELECT COUNT(*) FROM works WHERE sec_user_id IN ({placeholders})",
+        sec_user_ids
+    )
+    result["works_count"] = (await cursor.fetchone())[0]
+
+    # Count comments for those works
+    cursor = await db.conn.execute(
+        f"SELECT COUNT(*) FROM comments WHERE aweme_id IN (SELECT aweme_id FROM works WHERE sec_user_id IN ({placeholders}))",
+        sec_user_ids
+    )
+    result["comments_count"] = (await cursor.fetchone())[0]
+
+    # Count favorites
+    cursor = await db.conn.execute(
+        f"SELECT COUNT(*) FROM favorites WHERE sec_user_id IN ({placeholders})",
+        sec_user_ids
+    )
+    result["favorites_count"] = (await cursor.fetchone())[0]
+
+    return result
 
 
 async def delete_user(sec_user_id: str, cascade: bool = False):

@@ -57,13 +57,19 @@ async def delete_users_batch(req: BatchDeleteRequest):
 
 
 @router.get("")
-async def list_users(page: int = 1, size: int = 20, keyword: str = ""):
-    """List scraped users with pagination and optional keyword search."""
+async def list_users(
+    page: int = 1,
+    size: int = 20,
+    keyword: str = "",
+    sort_by: str = "updated_at",
+    sort_order: str = "DESC"
+):
+    """List scraped users with pagination, search, and sorting."""
     if keyword:
         users = await crud.search_users_local(keyword, limit=size)
         total = len(users)
     else:
-        users = await crud.get_users(page=page, size=size)
+        users = await crud.get_users(page=page, size=size, sort_by=sort_by, sort_order=sort_order)
         total = await crud.count_users()
     return {
         "items": [u.model_dump() for u in users],
@@ -71,6 +77,13 @@ async def list_users(page: int = 1, size: int = 20, keyword: str = ""):
         "page": page,
         "size": size,
     }
+
+
+@router.get("/delete-preview")
+async def get_delete_preview(sec_user_ids: list[str] = Query(...), cascade: bool = False):
+    """Get preview of what will be deleted for confirmation."""
+    preview = await crud.get_delete_preview(sec_user_ids, cascade)
+    return preview
 
 
 @router.delete("/{sec_user_id}")

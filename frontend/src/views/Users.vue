@@ -18,10 +18,21 @@
         <div class="toolbar-left">
           <span class="table-title">用户列表</span>
           <el-input v-model="searchKeyword" placeholder="搜索用户名/抖音号" clearable style="width: 200px" @input="debouncedSearch" prefix-icon="Search" />
+          <el-select v-model="sortBy" placeholder="排序方式" style="width: 140px" @change="fetchUsers">
+            <el-option label="更新时间" value="updated_at" />
+            <el-option label="用户名称" value="nickname" />
+            <el-option label="粉丝数量" value="follower_count" />
+            <el-option label="获赞数量" value="total_favorited" />
+            <el-option label="作品数量" value="aweme_count" />
+          </el-select>
+          <el-select v-model="sortOrder" placeholder="排序顺序" style="width: 100px" @change="fetchUsers">
+            <el-option label="降序" value="DESC" />
+            <el-option label="升序" value="ASC" />
+          </el-select>
           <el-tag v-if="selectedUsers.length" type="info" round>已选 {{ selectedUsers.length }}</el-tag>
         </div>
         <div class="toolbar-right">
-          <el-button v-if="selectedUsers.length" type="danger" plain @click="deleteTarget = selectedUsers.map(u => u.sec_user_id); showDeleteDialog = true">删除选中</el-button>
+          <el-button v-if="selectedUsers.length" type="danger" plain @click="openDeleteDialog(selectedUsers.map(u => u.sec_user_id))">删除选中</el-button>
           <el-button v-if="selectedUsers.length" type="primary" plain @click="batchCreateTasks">采集选中用户</el-button>
           <el-button @click="fetchUsers" :loading="loading">刷新</el-button>
         </div>
@@ -40,14 +51,14 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="粉丝" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
+        <el-table-column label="粉丝" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile" sortable="custom">
           <template #default="{ row }">{{ formatCount(row.follower_count) }}</template>
         </el-table-column>
-        <el-table-column label="获赞" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
+        <el-table-column label="获赞" width="90" class-name="col-hide-mobile" label-class-name="col-hide-mobile" sortable="custom">
           <template #default="{ row }">{{ formatCount(row.total_favorited) }}</template>
         </el-table-column>
-        <el-table-column prop="aweme_count" label="作品" width="70" class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
-        <el-table-column label="更新时间" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
+        <el-table-column prop="aweme_count" label="作品" width="70" class-name="col-hide-mobile" label-class-name="col-hide-mobile" sortable="custom" />
+        <el-table-column label="更新时间" width="110" class-name="col-hide-mobile" label-class-name="col-hide-mobile" sortable="custom">
           <template #default="{ row }">
             <span class="text-muted">{{ row.updated_at ? row.updated_at.slice(5,16).replace('T',' ') : '-' }}</span>
           </template>
@@ -57,7 +68,7 @@
             <div class="action-btns">
               <el-button size="small" @click="viewDetail(row)">详情</el-button>
               <el-button size="small" type="primary" plain @click="openRescrape(row)">更新资料</el-button>
-              <el-button size="small" type="danger" plain @click="deleteTarget = [row.sec_user_id]; showDeleteDialog = true">删除</el-button>
+              <el-button size="small" type="danger" plain @click="openDeleteDialog([row.sec_user_id])">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -155,15 +166,72 @@
     </el-dialog>
 
     <!-- Delete Dialog -->
-    <el-dialog v-model="showDeleteDialog" title="删除确认" width="420px" align-center>
-      <p style="margin: 0 0 16px">确定要删除 <strong>{{ deleteTarget.length }}</strong> 个用户吗？</p>
-      <el-radio-group v-model="deleteCascade" style="display: flex; flex-direction: column; gap: 10px">
-        <el-radio :value="false">仅删除用户记录</el-radio>
-        <el-radio :value="true">删除用户及其所有数据（作品、评论等）</el-radio>
-      </el-radio-group>
+    <el-dialog v-model="showDeleteDialog" title="删除确认" width="500px" align-center @close="resetDeleteDialog">
+      <p style="margin: 0 0 16px; font-size: 14px; color: #475569">
+        确定要删除 <strong>{{ deleteTarget.length }}</strong> 个用户吗？
+      </p>
+
+      <div v-if="deletePreview.loading" v-loading="true" style="min-height: 100px">
+        <span style="color: #94a3b8; font-size: 13px">正在计算影响范围...</span>
+      </div>
+
+      <div v-else-if="deletePreview.data" class="delete-preview">
+        <div class="delete-option-selector">
+          <el-radio-group v-model="deleteCascade" @change="recalculateDeletePreview">
+            <el-radio :value="false" size="large">
+              <div class="radio-content">
+                <div class="radio-title">仅删除用户记录</div>
+                <div class="radio-desc">作品、评论等数据将保留，但失去关联</div>
+              </div>
+            </el-radio>
+            <el-radio :value="true" size="large">
+              <div class="radio-content">
+                <div class="radio-title danger">删除用户及所有相关数据</div>
+                <div class="radio-desc">包括作品、评论、收藏、喜欢等所有数据</div>
+              </div>
+            </el-radio>
+          </el-radio-group>
+        </div>
+
+        <el-divider />
+
+        <div class="delete-summary">
+          <div class="summary-title">预计删除内容：</div>
+          <div class="summary-stats">
+            <div class="stat-item">
+              <span class="stat-label">用户记录</span>
+              <span class="stat-value">{{ deleteTarget.length }}</span>
+            </div>
+            <div v-if="deleteCascade" class="stat-item">
+              <span class="stat-label">作品数据</span>
+              <span class="stat-value danger">{{ deletePreview.data.works_count || 0 }}</span>
+            </div>
+            <div v-if="deleteCascade && deletePreview.data.comments_count" class="stat-item">
+              <span class="stat-label">评论数据</span>
+              <span class="stat-value danger">{{ deletePreview.data.comments_count }}</span>
+            </div>
+            <div v-if="deleteCascade && deletePreview.data.favorites_count" class="stat-item">
+              <span class="stat-label">收藏记录</span>
+              <span class="stat-value danger">{{ deletePreview.data.favorites_count }}</span>
+            </div>
+          </div>
+          <div v-if="deleteCascade" class="delete-warning">
+            <el-icon><WarningFilled /></el-icon>
+            <span>此操作不可恢复，请谨慎操作</span>
+          </div>
+        </div>
+      </div>
+
       <template #footer>
         <el-button @click="showDeleteDialog = false">取消</el-button>
-        <el-button type="danger" @click="doDelete">确认删除</el-button>
+        <el-button
+          v-if="!deletePreview.loading && deletePreview.data"
+          type="danger"
+          @click="confirmDelete"
+          :disabled="deletePreviewConfirmed"
+        >
+          {{ deletePreviewConfirmed ? '已确认' : '确认删除' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -242,6 +310,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { WarningFilled } from '@element-plus/icons-vue'
 import client from '../api/client'
 
 const users = ref<any[]>([])
@@ -252,12 +321,16 @@ const loading = ref(false)
 const scrapeId = ref('')
 const scraping = ref(false)
 const searchKeyword = ref('')
+const sortBy = ref('updated_at')
+const sortOrder = ref('DESC')
 const drawerVisible = ref(false)
 const detailData = ref<any>(null)
 const selectedUsers = ref<any[]>([])
 const showDeleteDialog = ref(false)
 const deleteCascade = ref(false)
 const deleteTarget = ref<string[]>([])
+const deletePreview = ref<{ loading: boolean; data: any }>({ loading: false, data: null })
+const deletePreviewConfirmed = ref(false)
 const showRescrapeDialog = ref(false)
 const rescrapeTarget = ref<any>(null)
 const rescrapeStatus = ref<any>(null)
@@ -291,6 +364,8 @@ async function fetchUsers() {
   loading.value = true
   const params: any = { page: page.value, size: pageSize }
   if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
+  if (sortBy.value) params.sort_by = sortBy.value
+  if (sortOrder.value) params.sort_order = sortOrder.value
   const res: any = await client.get('/users', { params })
   users.value = res.items
   total.value = res.total
@@ -338,17 +413,58 @@ async function doRescrape() {
   showRescrapeDialog.value = false
 }
 
-async function doDelete() {
-  if (deleteTarget.value.length === 1) {
-    await client.delete(`/users/${deleteTarget.value[0]}?cascade=${deleteCascade.value}`)
-  } else {
-    await client.delete('/users/batch', { data: { sec_user_ids: deleteTarget.value, cascade: deleteCascade.value } })
+async function openDeleteDialog(targets: string[]) {
+  deleteTarget.value = targets
+  deleteCascade.value = false
+  deletePreviewConfirmed.value = false
+  showDeleteDialog.value = true
+  await recalculateDeletePreview()
+}
+
+async function recalculateDeletePreview() {
+  if (!deleteTarget.value.length) return
+
+  deletePreview.value = { loading: true, data: null }
+
+  try {
+    const params = new URLSearchParams()
+    deleteTarget.value.forEach(id => params.append('sec_user_ids', id))
+    params.append('cascade', deleteCascade.value.toString())
+
+    const res: any = await client.get(`/users/delete-preview?${params.toString()}`)
+    deletePreview.value = { loading: false, data: res }
+  } catch (error) {
+    console.error('Failed to fetch delete preview:', error)
+    deletePreview.value = { loading: false, data: { works_count: 0, comments_count: 0, favorites_count: 0 } }
   }
-  ElMessage.success('删除成功')
-  showDeleteDialog.value = false
+}
+
+function resetDeleteDialog() {
   deleteTarget.value = []
   deleteCascade.value = false
-  fetchUsers()
+  deletePreview.value = { loading: false, data: null }
+  deletePreviewConfirmed.value = false
+}
+
+async function confirmDelete() {
+  if (deletePreviewConfirmed.value) {
+    // Second click - actually delete
+    if (deleteTarget.value.length === 1) {
+      await client.delete(`/users/${deleteTarget.value[0]}?cascade=${deleteCascade.value}`)
+    } else {
+      await client.delete('/users/batch', { data: { sec_user_ids: deleteTarget.value, cascade: deleteCascade.value } })
+    }
+    ElMessage.success('删除成功')
+    showDeleteDialog.value = false
+    resetDeleteDialog()
+    if (selectedUsers.value.length) {
+      selectedUsers.value = []
+    }
+    fetchUsers()
+  } else {
+    // First click - show confirmation
+    deletePreviewConfirmed.value = true
+  }
 }
 
 // Batch task creation methods
@@ -494,4 +610,24 @@ onMounted(fetchUsers)
   :deep(.col-hide-mobile) { display: none !important; }
   :deep(.col-action) { width: 100px !important; min-width: 100px !important; }
 }
+
+/* Delete Preview Styles */
+.delete-preview { margin-top: 16px; }
+.delete-option-selector { margin-bottom: 16px; }
+.delete-option-selector .el-radio { display: flex; margin-bottom: 12px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; transition: all 0.2s; }
+.delete-option-selector .el-radio:hover { background: #f8fafc; border-color: #cbd5e1; }
+.delete-option-selector .el-radio.is-checked { border-color: #3b82f6; background: #eff6ff; }
+.radio-content { display: flex; flex-direction: column; gap: 4px; }
+.radio-title { font-size: 14px; font-weight: 500; color: #1e293b; }
+.radio-title.danger { color: #dc2626; }
+.radio-desc { font-size: 12px; color: #64748b; }
+
+.delete-summary { background: #fef2f2; border-radius: 8px; padding: 16px; border: 1px solid #fecaca; }
+.summary-title { font-size: 13px; font-weight: 600; color: #991b1b; margin-bottom: 12px; }
+.summary-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 12px; }
+.stat-item { display: flex; justify-content: space-between; align-items: center; background: white; padding: 10px 12px; border-radius: 6px; }
+.stat-label { font-size: 12px; color: #64748b; }
+.stat-value { font-size: 16px; font-weight: 600; color: #1e293b; }
+.stat-value.danger { color: #dc2626; }
+.delete-warning { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid #fecaca; color: #dc2626; font-size: 12px; }
 </style>
