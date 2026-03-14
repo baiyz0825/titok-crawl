@@ -419,6 +419,22 @@ const transcriptExpanded = ref(false)
 const recognizing = ref(false)
 let recognizePollTimer: ReturnType<typeof setInterval> | null = null
 
+// Task creation related
+const showCreateTaskDialog = ref(false)
+const submittingTask = ref(false)
+const taskForm = ref({
+  task_type: 'user_works',
+  task_category: 'once',
+  schedule_interval: 'daily',
+  target: '',
+  max_count: undefined,
+  sync_types: [] as string[],
+  recursive_depth: 1
+})
+const userOptions = ref<any[]>([])
+const userSearchLoading = ref(false)
+const currentUserLoading = ref(false)
+
 // Clean up polling when detail dialog closes
 watch(drawerVisible, (visible) => {
   if (!visible && recognizePollTimer) {
@@ -559,6 +575,107 @@ async function recognizeSpeech() {
   }
 }
 
+// Task creation related methods
+function openCreateTaskDialog() {
+  showCreateTaskDialog.value = true
+  searchUsers('')
+}
+
+function resetTaskForm() {
+  taskForm.value = {
+    task_type: 'user_works',
+    task_category: 'once',
+    schedule_interval: 'daily',
+    target: '',
+    max_count: undefined,
+    sync_types: [],
+    recursive_depth: 1
+  }
+}
+
+async function searchUsers(query: string = '') {
+  userSearchLoading.value = true
+  try {
+    const params: any = { size: 20 }
+    if (query) {
+      params.keyword = query
+    }
+    const res: any = await client.get('/users', { params })
+    userOptions.value = res.items || []
+  } catch {
+    userOptions.value = []
+  }
+  userSearchLoading.value = false
+}
+
+async function onSelectVisibleChange(visible: boolean) {
+  if (visible && userOptions.value.length === 0) {
+    await searchUsers('')
+  }
+}
+
+async function selectCurrentUser() {
+  currentUserLoading.value = true
+  try {
+    const res: any = await client.get('/sessions/current-user')
+    taskForm.value.target = res.sec_user_id
+    if (res.nickname || res.douyin_id || res.avatar_url) {
+      userOptions.value = [res]
+    }
+    ElMessage.success('已选择当前登录用户')
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '获取当前用户失败，请确保已登录')
+  } finally {
+    currentUserLoading.value = false
+  }
+}
+
+async function submitTask() {
+  if (!taskForm.value.target) {
+    ElMessage.warning('请选择目标用户')
+    return
+  }
+
+  submittingTask.value = true
+  try {
+    const params: any = {
+      task_type: taskForm.value.task_type,
+      target: taskForm.value.target,
+      is_scheduled: taskForm.value.task_category === 'scheduled'
+    }
+    if (taskForm.value.task_category === 'scheduled') {
+      params.schedule_interval = taskForm.value.schedule_interval
+    }
+    if (taskForm.value.max_count) params.max_count = taskForm.value.max_count
+
+    // 处理采集选项
+    if (taskForm.value.sync_types.includes('refresh_info')) {
+      params.refresh_info = true
+    }
+    if (taskForm.value.sync_types.includes('scrape_comments')) {
+      params.scrape_comments = true
+    }
+    if (taskForm.value.sync_types.includes('download_media')) {
+      params.download_media = true
+    }
+    if (taskForm.value.sync_types.includes('collect_profile')) {
+      params.collect_profile = true
+    }
+    if (taskForm.value.sync_types.includes('recursive')) {
+      params.recursive = true
+      params.recursive_depth = taskForm.value.recursive_depth || 1
+    }
+
+    await client.post('/tasks', params)
+    ElMessage.success('任务已创建')
+    showCreateTaskDialog.value = false
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '创建失败')
+  } finally {
+    submittingTask.value = false
+  }
+}
+
 onMounted(fetchWorks)
 </script>
 
@@ -674,6 +791,12 @@ onMounted(fetchWorks)
 .rescrape-item-info { font-size: 12px; color: #059669; }
 .rescrape-item-info.none { color: #94a3b8; }
 .rescrape-loading { min-height: 60px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 13px; }
+
+/* Create task dialog styles */
+.user-option { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.user-option-info { display: flex; flex-direction: column; min-width: 0; }
+.user-option-name { font-size: 13px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-option-id { font-size: 11px; color: #94a3b8; }
 
 @media (max-width: 768px) {
   .table-toolbar { flex-direction: column; align-items: flex-start; }

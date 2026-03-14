@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 from backend.db.database import db
-from backend.db.models import User, Work, MediaFile, Task, Session, Comment, Schedule, Favorite
+from backend.db.models import User, Work, MediaFile, Task, Session, Comment, Favorite
 
 
 # ── Users ──
@@ -454,59 +454,29 @@ async def count_user_media(sec_user_id: str) -> int:
     return row[0]
 
 
-# ── Schedules ──
+# ── Scheduled Tasks ──
 
-async def create_schedule(schedule: Schedule) -> int:
-    now = datetime.now().isoformat()
+async def get_due_scheduled_tasks() -> list[Task]:
+    """Get tasks that are scheduled and due to run."""
     from datetime import timedelta
-    next_run = (datetime.now() + timedelta(minutes=schedule.interval_minutes)).isoformat()
-    await db.conn.execute(
-        """INSERT INTO schedules (sec_user_id, nickname, sync_type, interval_minutes, enabled, next_run_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (schedule.sec_user_id, schedule.nickname, schedule.sync_type,
-         schedule.interval_minutes, schedule.enabled, next_run, now),
-    )
-    await db.conn.commit()
-    cursor = await db.conn.execute("SELECT last_insert_rowid()")
-    row = await cursor.fetchone()
-    return row[0]
-
-
-async def get_schedules() -> list[Schedule]:
-    cursor = await db.conn.execute("SELECT * FROM schedules ORDER BY created_at DESC")
-    rows = await cursor.fetchall()
-    return [Schedule(**dict(r)) for r in rows]
-
-
-async def get_schedule(schedule_id: int) -> Schedule | None:
-    cursor = await db.conn.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
-    row = await cursor.fetchone()
-    return Schedule(**dict(row)) if row else None
-
-
-async def update_schedule(schedule_id: int, **kwargs):
-    if not kwargs:
-        return
-    sets = ", ".join(f"{k} = ?" for k in kwargs)
-    vals = list(kwargs.values()) + [schedule_id]
-    await db.conn.execute(f"UPDATE schedules SET {sets} WHERE id = ?", vals)
-    await db.conn.commit()
-
-
-async def delete_schedule(schedule_id: int):
-    await db.conn.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
-    await db.conn.commit()
-
-
-async def get_due_schedules() -> list[Schedule]:
-    """Get schedules that are due to run."""
     now = datetime.now().isoformat()
     cursor = await db.conn.execute(
-        "SELECT * FROM schedules WHERE enabled = 1 AND (next_run_at IS NULL OR next_run_at <= ?)",
+        "SELECT * FROM tasks WHERE is_scheduled = 1 AND status IN ('pending', 'completed') AND (next_run_at IS NULL OR next_run_at <= ?)",
         (now,),
     )
     rows = await cursor.fetchall()
-    return [Schedule(**dict(r)) for r in rows]
+    return [Task(**dict(r)) for r in rows]
+
+
+async def update_scheduled_task_next_run(task_id: int, interval_minutes: int):
+    """Update the next run time for a scheduled task after execution."""
+    from datetime import timedelta
+    next_run = (datetime.now() + timedelta(minutes=interval_minutes)).isoformat()
+    await db.conn.execute(
+        "UPDATE tasks SET next_run_at = ?, status = 'pending' WHERE id = ?",
+        (next_run, task_id)
+    )
+    await db.conn.commit()
 
 
 # ── Favorites ──

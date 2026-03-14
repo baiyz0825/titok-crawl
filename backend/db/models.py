@@ -103,18 +103,6 @@ class Comment(BaseModel):
     created_at: datetime | None = None
 
 
-class Schedule(BaseModel):
-    id: int | None = None
-    sec_user_id: str
-    nickname: str | None = None
-    sync_type: str = "all"  # profile, works, all
-    interval_minutes: int = 1440  # default 24h
-    enabled: bool = True
-    last_run_at: datetime | None = None
-    next_run_at: datetime | None = None
-    created_at: datetime | None = None
-
-
 class Favorite(BaseModel):
     id: int | None = None
     aweme_id: str
