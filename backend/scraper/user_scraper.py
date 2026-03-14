@@ -303,7 +303,8 @@ class UserScraper:
 
             # Pagination loop
             effective_max = max_pages or 999
-            has_more = data.get("has_more", 0) if data else 0
+            # Check if there's more data by looking at aweme_list length
+            has_more = len(data.get("aweme_list", [])) > 0 if data else False
             if on_page:
                 on_page(page_count, effective_max)
 
@@ -322,7 +323,7 @@ class UserScraper:
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await page.wait_for_timeout(1000)
 
-                data = await self.interceptor.wait_for("module/feed", timeout=10)
+                data = await self.interceptor.wait_for("aweme/favorite", timeout=10)
                 if not data:
                     break
 
@@ -333,7 +334,7 @@ class UserScraper:
 
                 all_works.extend(works)
                 page_count += 1
-                has_more = data.get("has_more", 0)
+                has_more = len(aweme_list) > 0
                 logger.info(f"Likes Page {page_count}: got {len(works)} works (total: {len(all_works)})")
                 if on_page:
                     on_page(page_count, effective_max)
@@ -384,7 +385,8 @@ class UserScraper:
 
             # Pagination loop
             effective_max = max_pages or 999
-            has_more = data.get("has_more", 0) if data else 0
+            # Check if there's more data by looking at aweme_list length
+            has_more = len(data.get("aweme_list", [])) > 0 if data else False
             if on_page:
                 on_page(page_count, effective_max)
 
@@ -414,7 +416,7 @@ class UserScraper:
 
                 all_works.extend(works)
                 page_count += 1
-                has_more = data.get("has_more", 0)
+                has_more = len(aweme_list) > 0
                 logger.info(f"Favorites Page {page_count}: got {len(works)} works (total: {len(all_works)})")
                 if on_page:
                     on_page(page_count, effective_max)
