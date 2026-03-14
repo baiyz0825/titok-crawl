@@ -166,6 +166,76 @@
         <el-button type="danger" @click="doDelete">确认删除</el-button>
       </template>
     </el-dialog>
+
+    <!-- Batch Create Task Dialog -->
+    <el-dialog v-model="showBatchTaskDialog" title="批量创建采集任务" width="480px" align-center>
+      <p style="margin: 0 0 16px; font-size: 14px; color: #475569">
+        为选中的 <strong>{{ selectedUsers.length }}</strong> 个用户创建采集任务
+      </p>
+      <el-form :model="batchTaskForm" label-width="100px" label-position="left">
+        <el-form-item label="任务类型">
+          <el-select v-model="batchTaskForm.task_type" style="width: 100%">
+            <el-option label="用户资料" value="user_profile" />
+            <el-option label="用户作品" value="user_works" />
+            <el-option label="全量采集" value="user_all" />
+            <el-option label="喜欢列表" value="user_likes" />
+            <el-option label="收藏列表" value="user_favorites" />
+            <el-option label="关注列表" value="user_following" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="执行方式">
+          <el-radio-group v-model="batchTaskForm.task_category">
+            <el-radio value="once">立即执行</el-radio>
+            <el-radio value="scheduled">定时执行</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="batchTaskForm.task_category === 'scheduled'" label="执行间隔">
+          <el-select v-model="batchTaskForm.schedule_interval" style="width: 100%">
+            <el-option label="每小时" value="hourly" />
+            <el-option label="每天" value="daily" />
+            <el-option label="每周" value="weekly" />
+            <el-option label="每月" value="monthly" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites', 'user_following'].includes(batchTaskForm.task_type)" label="最大采集数量">
+          <el-input-number v-model="batchTaskForm.max_count" :min="1" :max="1000" placeholder="不限制" style="width: 100%" />
+          <span style="font-size: 12px; color: #94a3b8; margin-top: 4px; display: block;">留空则采集全部</span>
+        </el-form-item>
+
+        <el-form-item v-if="['user_works', 'user_all'].includes(batchTaskForm.task_type)" label="采集选项">
+          <el-checkbox-group v-model="batchTaskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox label="refresh_info">更新作品信息（简介、点赞、播放、收藏等）</el-checkbox>
+            <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
+            <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+
+        <el-form-item v-if="batchTaskForm.task_type === 'user_following'" label="关注列表选项">
+          <el-checkbox-group v-model="batchTaskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox value="collect_profile" label="采集用户资料（头像、昵称、简介等）" />
+            <el-checkbox value="recursive" label="递归采集（采集关注用户的关注列表）">
+              <template #default>
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-left: 24px; margin-top: 8px;" v-if="batchTaskForm.sync_types.includes('recursive')">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: #64748b;">递归深度：</span>
+                    <el-input-number v-model="batchTaskForm.recursive_depth" :min="1" :max="3" placeholder="最多3层" style="width: 120px" />
+                    <span style="font-size: 12px; color: #94a3b8;">（1=仅关注，2=关注+关注的朋友，3=再扩展一层）</span>
+                  </div>
+                </div>
+              </template>
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showBatchTaskDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitBatchTasks" :loading="submittingBatchTasks">创建 {{ selectedUsers.length }} 个任务</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
