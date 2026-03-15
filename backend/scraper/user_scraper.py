@@ -660,29 +660,19 @@ class UserScraper:
                 # Wait for page to load
                 await page.wait_for_selector('text=关注', timeout=5000)
 
-                # Click on the "关注" link element in the user profile header
-                # Use a more reliable selector based on text content and position
+                # Click on the "关注" button to open following list modal
+                # VERIFIED in chrome-devtools: This selector successfully finds and clicks the element
                 await page.evaluate("""
                     () => {
-                        // Find all links containing "关注" text
-                        const allLinks = document.querySelectorAll('a');
-                        for (const link of allLinks) {
-                            const text = link.textContent.trim();
-                            // Look for the "关注" link in the user profile section
-                            // It should be near the user avatar and contain only "关注" or "关注" + number
-                            if (text === '关注' || text.startsWith('关注')) {
-                                // Verify it's in the user profile header by checking if there's a sibling with "粉丝"
-                                const parent = link.parentElement;
-                                if (parent) {
-                                    const siblings = parent.querySelectorAll('a');
-                                    for (const sibling of siblings) {
-                                        if (sibling.textContent.includes('粉丝')) {
-                                            // Found the right section - click the "关注" link
-                                            link.click();
-                                            return true;
-                                        }
-                                    }
-                                }
+                        // Find the <P> element containing "关注" followed by a number (e.g., "关注 43")
+                        const allPs = document.querySelectorAll('p');
+                        for (const p of allPs) {
+                            const text = p.textContent.trim();
+                            // Match "关注 43", "关注 0", etc. (关注 + whitespace + digits)
+                            // Also ensure it's not a long text that just happens to contain "关注"
+                            if (/关注\\s*\\d+/.test(text) && text.length < 10) {
+                                p.click();
+                                return true;
                             }
                         }
                         return false;
