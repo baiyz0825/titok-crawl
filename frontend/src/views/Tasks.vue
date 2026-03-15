@@ -5,6 +5,57 @@
       <p class="page-subtitle">管理和创建数据采集任务</p>
     </div>
 
+    <!-- 任务统计面板 -->
+    <div class="stats-panel" v-loading="statsLoading">
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #dbeafe; color: #0284c7;">
+          <el-icon :size="24"><Document /></el-icon>
+        </div>
+        <div class="stat-content">
+          <div class="stat-label">今日任务</div>
+          <div class="stat-value">{{ stats.total }}</div>
+          <div class="stat-detail">
+            <span class="stat-success">成功 {{ stats.completed }}</span>
+            <span class="stat-failed">失败 {{ stats.failed }}</span>
+            <span class="stat-running">运行中 {{ stats.running }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #fef3c7; color: #d97706;">
+          <el-icon :size="24"><Clock /></el-icon>
+        </div>
+        <div class="stat-content">
+          <div class="stat-label">等待中</div>
+          <div class="stat-value">{{ stats.pending }}</div>
+          <div class="stat-detail">队列中待处理的任务</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #d1fae5; color: #059669;">
+          <el-icon :size="24"><SuccessFilled /></el-icon>
+        </div>
+        <div class="stat-content">
+          <div class="stat-label">成功率</div>
+          <div class="stat-value">{{ stats.successRate }}%</div>
+          <div class="stat-detail">任务完成成功率</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #e0e7ff; color: #7c3aed;">
+          <el-icon :size="24"><Setting /></el-icon>
+        </div>
+        <div class="stat-content">
+          <div class="stat-label">系统状态</div>
+          <div class="stat-value">正常</div>
+          <div class="stat-detail">并发任务 {{ stats.running }}/3</div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="table-toolbar">
         <div class="toolbar-left">
@@ -362,6 +413,17 @@ const selectedTasks = ref<any[]>([])
 let refreshTimer: ReturnType<typeof setInterval>
 let eventSource: EventSource | null = null
 
+// 任务统计数据
+const stats = ref({
+  total: 0,
+  pending: 0,
+  running: 0,
+  completed: 0,
+  failed: 0,
+  successRate: 0
+})
+const statsLoading = ref(false)
+
 // 创建任务相关
 const showCreateDialog = ref(false)
 const submitting = ref(false)
@@ -430,6 +492,34 @@ async function fetchTasks() {
   tasks.value = res.items
   total.value = res.total
   loading.value = false
+}
+
+async function fetchStats() {
+  try {
+    statsLoading.value = true
+    // 获取今日任务统计
+    const today = new Date().toISOString().slice(0, 10)
+    const res: any = await client.get('/tasks/stats', {
+      params: { start_date: today, end_date: today }
+    })
+
+    const totalTasks = res.total || 0
+    const completed = res.by_status?.completed || 0
+    const failed = res.by_status?.failed || 0
+
+    stats.value = {
+      total: totalTasks,
+      pending: res.by_status?.pending || 0,
+      running: res.by_status?.running || 0,
+      completed: completed,
+      failed: failed,
+      successRate: totalTasks > 0 ? Math.round((completed / totalTasks) * 100) : 0
+    }
+  } catch (error) {
+    console.error('Failed to fetch stats:', error)
+  } finally {
+    statsLoading.value = false
+  }
 }
 
 async function cancelTask(id: number) { await client.post(`/tasks/${id}/cancel`); ElMessage.success('已取消'); fetchTasks() }
@@ -573,8 +663,12 @@ function startProgressSSE() {
 
 onMounted(async () => {
   await fetchTasks()
+  await fetchStats()
   await searchUsers('') // 初始加载用户列表
-  refreshTimer = setInterval(fetchTasks, 5000)
+  refreshTimer = setInterval(() => {
+    fetchTasks()
+    fetchStats() // 同时更新统计数据
+  }, 5000)
   startProgressSSE()
 })
 onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
@@ -585,6 +679,70 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 .page-header { margin-bottom: 24px; }
 .page-header h1 { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
 .page-subtitle { color: #64748b; font-size: 14px; margin: 0; }
+
+.stats-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.stat-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.stat-detail {
+  font-size: 12px;
+  color: #94a3b8;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stat-success { color: #10b981; }
+.stat-failed { color: #ef4444; }
+.stat-running { color: #3b82f6; }
 
 .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; }
 .table-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }

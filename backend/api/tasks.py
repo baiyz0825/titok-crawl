@@ -91,6 +91,39 @@ async def progress_stream(task_id: int | None = None):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+@router.get("/stats")
+async def get_tasks_stats(
+    start_date: str | None = None,
+    end_date: str | None = None
+):
+    """Get task statistics for a date range."""
+    # Get all tasks in the date range
+    tasks = await crud.get_tasks(
+        status=None,
+        task_type=None,
+        start_date=start_date,
+        end_date=end_date,
+        page=1,
+        size=99999  # Get all tasks
+    )
+
+    # Calculate statistics
+    total = len(tasks)
+    by_status = {}
+    for task in tasks:
+        status = task.status
+        by_status[status] = by_status.get(status, 0) + 1
+
+    completed = by_status.get('completed', 0)
+    success_rate = (completed / total * 100) if total > 0 else 0
+
+    return {
+        "total": total,
+        "by_status": by_status,
+        "success_rate": round(success_rate, 1)
+    }
+
+
 @router.post("")
 async def create_task(req: CreateTaskRequest):
     """Create a new task."""
