@@ -660,19 +660,15 @@ class UserScraper:
                 # Wait for page to load
                 await page.wait_for_selector('text=关注', timeout=5000)
 
-                # Click on the "关注" element (the one that shows the following count)
-                # This opens the following list modal
+                # Click on the "关注" link element in the user profile header
+                # The element has class "uz1VJwFY" and is an <A> tag
                 await page.evaluate("""
                     () => {
-                        // Find and click the "关注" element in the user profile header
-                        const elements = document.querySelectorAll('*');
-                        for (const el of elements) {
-                            if (el.childNodes.length === 1 &&
-                                el.textContent === '关注' &&
-                                el.nextSibling &&
-                                el.nextSibling.textContent.includes('关注')) {
-                                // Found the following element, click it
-                                el.click();
+                        // Find the <A> element with class containing "uz1VJwFY"
+                        const links = document.querySelectorAll('a[class*="uz1VJwFY"]');
+                        for (const link of links) {
+                            if (link.textContent.includes('关注')) {
+                                link.click();
                                 return true;
                             }
                         }
