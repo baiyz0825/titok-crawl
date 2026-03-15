@@ -366,6 +366,7 @@
             <el-checkbox label="refresh_info">更新作品信息（简介、点赞、播放、收藏等）</el-checkbox>
             <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
             <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
+            <el-checkbox label="speech_recognition">语音转写（从视频中提取语音转成文字）</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
 
@@ -374,6 +375,7 @@
             <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
             <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
             <el-checkbox label="collect_creators">采集视频作者信息（将视频发布者的资料一并采集）</el-checkbox>
+            <el-checkbox label="speech_recognition">语音转写（从视频中提取语音转成文字）</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
 
@@ -665,6 +667,9 @@ async function submitTask() {
     }
     if (taskForm.value.sync_types.includes('download_media')) {
       params.download_media = true
+    }
+    if (taskForm.value.sync_types.includes('speech_recognition')) {
+      params.speech_recognition = true
     }
     if (taskForm.value.sync_types.includes('collect_profile')) {
       params.collect_profile = true

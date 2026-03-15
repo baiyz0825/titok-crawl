@@ -361,6 +361,7 @@ class TaskWorker:
         collect_creators = params.get("collect_creators", False)
         download_media = params.get("download_media", False)
         scrape_comments = params.get("scrape_comments", False)
+        speech_recognition = params.get("speech_recognition", False)
         progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
 
         works = await self.user_scraper.scrape_likes(
@@ -462,11 +463,52 @@ class TaskWorker:
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
+        # Speech recognition if requested
+        transcript_count = 0
+        if speech_recognition and download_count > 0:
+            # Only process works that have downloaded video files
+            logger.info(f"[Task {task_id}] Starting speech recognition for {len(processed_works)} works")
+            progress_manager.update(task_id, 0.96, "语音转写", f"准备对视频进行语音识别")
+
+            for i, work in enumerate(processed_works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
+                    break
+
+                try:
+                    # Find downloaded video file for this work
+                    media_files = await crud.get_media_files(work.aweme_id)
+                    video_path = None
+                    for mf in media_files:
+                        if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
+                            from pathlib import Path
+                            if Path(mf.local_path).exists():
+                                video_path = mf.local_path
+                                break
+
+                    if video_path:
+                        progress_manager.update(
+                            task_id,
+                            0.96 + 0.03 * (i + 1) / len(processed_works),
+                            f"语音识别 {i+1}/{len(processed_works)}",
+                            work.aweme_id
+                        )
+                        text = await self.speech_recognizer.recognize(video_path)
+                        if text:
+                            await crud.update_work_transcript(work.aweme_id, text)
+                            transcript_count += 1
+                            logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
+
         extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
         if download_count > 0:
             extra_info += f"，下载 {download_count} 个媒体"
         if comments_count > 0:
             extra_info += f"，{comments_count} 条评论"
+        if transcript_count > 0:
+            extra_info += f"，转写 {transcript_count} 个语音"
         if creators_collected > 0:
             extra_info += f"，采集作者 {creators_collected} 个"
 
@@ -477,6 +519,7 @@ class TaskWorker:
             "updated": updated_count,
             "media_downloaded": download_count,
             "comments_count": comments_count,
+            "transcript_count": transcript_count,
             "creators_collected": creators_collected,
             "types": {
                 "video": sum(1 for w in processed_works if w.type == "video"),
@@ -491,6 +534,7 @@ class TaskWorker:
         collect_creators = params.get("collect_creators", False)
         download_media = params.get("download_media", False)
         scrape_comments = params.get("scrape_comments", False)
+        speech_recognition = params.get("speech_recognition", False)
         progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
 
         works = await self.user_scraper.scrape_favorites(
@@ -594,11 +638,52 @@ class TaskWorker:
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
+        # Speech recognition if requested
+        transcript_count = 0
+        if speech_recognition and download_count > 0:
+            # Only process works that have downloaded video files
+            logger.info(f"[Task {task_id}] Starting speech recognition for {len(processed_works)} works")
+            progress_manager.update(task_id, 0.96, "语音转写", f"准备对视频进行语音识别")
+
+            for i, work in enumerate(processed_works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
+                    break
+
+                try:
+                    # Find downloaded video file for this work
+                    media_files = await crud.get_media_files(work.aweme_id)
+                    video_path = None
+                    for mf in media_files:
+                        if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
+                            from pathlib import Path
+                            if Path(mf.local_path).exists():
+                                video_path = mf.local_path
+                                break
+
+                    if video_path:
+                        progress_manager.update(
+                            task_id,
+                            0.96 + 0.03 * (i + 1) / len(processed_works),
+                            f"语音识别 {i+1}/{len(processed_works)}",
+                            work.aweme_id
+                        )
+                        text = await self.speech_recognizer.recognize(video_path)
+                        if text:
+                            await crud.update_work_transcript(work.aweme_id, text)
+                            transcript_count += 1
+                            logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
+
         extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
         if download_count > 0:
             extra_info += f"，下载 {download_count} 个媒体"
         if comments_count > 0:
             extra_info += f"，{comments_count} 条评论"
+        if transcript_count > 0:
+            extra_info += f"，转写 {transcript_count} 个语音"
         if creators_collected > 0:
             extra_info += f"，采集作者 {creators_collected} 个"
 
@@ -609,6 +694,7 @@ class TaskWorker:
             "updated": updated_count,
             "media_downloaded": download_count,
             "comments_count": comments_count,
+            "transcript_count": transcript_count,
             "creators_collected": creators_collected,
             "types": {
                 "video": sum(1 for w in processed_works if w.type == "video"),
