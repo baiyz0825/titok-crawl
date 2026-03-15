@@ -171,7 +171,17 @@
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="target" label="目标" min-width="160" show-overflow-tooltip class-name="col-hide-mobile" label-class-name="col-hide-mobile" />
+        <el-table-column label="目标" min-width="160" class-name="col-hide-mobile" label-class-name="col-hide-mobile">
+          <template #default="{ row }">
+            <div
+              @click="navigateToUser(row.target)"
+              class="target-cell"
+              :title="row.target"
+            >
+              {{ getTargetLabel(row.target) }}
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="错误" min-width="120" show-overflow-tooltip class-name="col-hide-mobile" label-class-name="col-hide-mobile">
           <template #default="{ row }">
             <span v-if="row.error_message" style="color: #ef4444; font-size: 12px">{{ row.error_message }}</span>
@@ -499,6 +509,59 @@ function statusLabel(s: string) {
 
 function formatDate(d: string) { return d ? d.slice(5, 16).replace('T', ' ') : '-' }
 
+// User info cache for target display
+const userCache = ref<Record<string, any>>({})
+
+async function prefetchUserInfo() {
+  // Preload user info for all tasks
+  const uniqueTargets = new Set<string>()
+  tasks.value.forEach(task => {
+    if (task.target && task.target.startsWith('MS4w')) {
+      uniqueTargets.add(task.target)
+    }
+  })
+
+  // Fetch user info in parallel
+  await Promise.all(
+    Array.from(uniqueTargets).map(target => fetchUserInfo(target))
+  )
+}
+
+async function fetchUserInfo(secUserId: string) {
+  if (userCache.value[secUserId]) {
+    return userCache.value[secUserId]
+  }
+  try {
+    const user: any = await client.get(`/users/${secUserId}`)
+    if (user) {
+      userCache.value[secUserId] = user
+    }
+    return user
+  } catch {
+    return null
+  }
+}
+
+function getTargetLabel(target: string) {
+  // Check if it's a sec_user_id (starts with MS4w)
+  if (target && target.startsWith('MS4w')) {
+    const user = userCache.value[target]
+    if (user && user.nickname) {
+      return user.nickname
+    }
+    // Shorten the display if no nickname
+    return target.slice(0, 16) + '...'
+  }
+  return target
+}
+
+function navigateToUser(secUserId: string) {
+  // Navigate to user detail page
+  // For now, just copy to clipboard
+  navigator.clipboard.writeText(secUserId)
+  ElMessage.success('已复制用户ID')
+}
+
 function formatTaskResult(result: any) {
   if (!result) return ''
   const parts = []
@@ -766,6 +829,7 @@ onMounted(async () => {
   await fetchTasks()
   await fetchStats()
   await searchUsers('') // 初始加载用户列表
+  await prefetchUserInfo() // 预加载用户信息
   refreshTimer = setInterval(() => {
     fetchTasks()
     fetchStats() // 同时更新统计数据
@@ -853,6 +917,20 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 .table-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
 .text-muted { color: #94a3b8; font-size: 13px; }
 .action-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.target-cell {
+  cursor: pointer;
+  color: #3b82f6;
+  transition: all 0.2s ease;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.target-cell:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
 
 .status-badge {
   display: inline-flex; align-items: center; padding: 2px 10px;
