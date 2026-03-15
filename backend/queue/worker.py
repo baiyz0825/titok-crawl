@@ -446,9 +446,15 @@ class TaskWorker:
         if collect_creators and processed_works:
             # Collect unique author sec_user_ids
             author_ids = list(set(w.sec_user_id for w in processed_works))
+            logger.info(f"[Task {task_id}] Collecting info for {len(author_ids)} unique creators")
             progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
 
             for i, author_id in enumerate(author_ids):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                    break
+
                 try:
                     progress_manager.update(
                         task_id,
@@ -456,10 +462,14 @@ class TaskWorker:
                         f"采集作者 {i+1}/{len(author_ids)}",
                         author_id
                     )
+                    logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(author_ids)}: {author_id}")
                     user = await self.user_scraper.scrape_profile(task_id, author_id)
                     if user:
                         await crud.upsert_user(user)
                         creators_collected += 1
+                        logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                    else:
+                        logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
@@ -621,9 +631,15 @@ class TaskWorker:
         if collect_creators and processed_works:
             # Collect unique author sec_user_ids
             author_ids = list(set(w.sec_user_id for w in processed_works))
+            logger.info(f"[Task {task_id}] Collecting info for {len(author_ids)} unique creators")
             progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
 
             for i, author_id in enumerate(author_ids):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                    break
+
                 try:
                     progress_manager.update(
                         task_id,
@@ -631,10 +647,14 @@ class TaskWorker:
                         f"采集作者 {i+1}/{len(author_ids)}",
                         author_id
                     )
+                    logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(author_ids)}: {author_id}")
                     user = await self.user_scraper.scrape_profile(task_id, author_id)
                     if user:
                         await crud.upsert_user(user)
                         creators_collected += 1
+                        logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                    else:
+                        logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 

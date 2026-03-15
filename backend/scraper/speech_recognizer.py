@@ -18,9 +18,11 @@ class SpeechRecognizer:
         if cls._model is None:
             try:
                 from faster_whisper import WhisperModel
-                logger.info("Loading whisper model (base, int8)...")
-                cls._model = WhisperModel("base", device="cpu", compute_type="int8")
-                logger.info("Whisper model loaded")
+                # Use tiny model for faster processing (5-10x faster than base)
+                # Trade-off: slightly lower accuracy but much faster
+                logger.info("Loading whisper model (tiny, int8) for faster processing...")
+                cls._model = WhisperModel("tiny", device="cpu", compute_type="int8")
+                logger.info("Whisper model loaded (tiny - optimized for speed)")
             except ImportError:
                 logger.error("faster-whisper not installed. Run: pip install faster-whisper")
                 raise
