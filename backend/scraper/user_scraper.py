@@ -299,7 +299,7 @@ class UserScraper:
 
     async def scrape_likes(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
-        on_page: Callable | None = None,
+        on_page: Callable | None = None, check_cancelled: Callable | None = None,
     ) -> list[Work]:
         """Scrape current user's liked videos (喜欢) with pagination."""
         page = await engine.acquire_page(task_id)
@@ -345,6 +345,11 @@ class UserScraper:
                 on_page(page_count, effective_max)
 
             while has_more and page_count < effective_max:
+                # Check if task is cancelled
+                if check_cancelled and await check_cancelled():
+                    logger.info(f"Task #{task_id} was cancelled, stopping pagination")
+                    break
+
                 # Check max_count limit before continuing
                 if max_count and len(all_works) >= max_count:
                     logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
@@ -459,7 +464,7 @@ class UserScraper:
 
     async def scrape_favorites(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
-        on_page: Callable | None = None,
+        on_page: Callable | None = None, check_cancelled: Callable | None = None,
     ) -> list[Work]:
         """Scrape current user's favorite videos (收藏) with pagination."""
         page = await engine.acquire_page(task_id)
@@ -504,6 +509,11 @@ class UserScraper:
                 on_page(page_count, effective_max)
 
             while has_more and page_count < effective_max:
+                # Check if task is cancelled
+                if check_cancelled and await check_cancelled():
+                    logger.info(f"Task #{task_id} was cancelled, stopping pagination")
+                    break
+
                 # Check max_count limit before continuing
                 if max_count and len(all_works) >= max_count:
                     logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")

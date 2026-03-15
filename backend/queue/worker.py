@@ -23,6 +23,11 @@ class TaskWorker:
         self.comment_scraper = CommentScraper()
         self.speech_recognizer = SpeechRecognizer()
 
+    async def _check_cancelled(self, task_id: int) -> bool:
+        """Check if task has been cancelled."""
+        task = await crud.get_task(task_id)
+        return task and task.status == "cancelled"
+
     async def execute(self, task_id: int, task_type: str, target: str, params: str | None) -> dict:
         """Execute a task and return result summary."""
         parsed_params = json.loads(params) if params else {}
@@ -365,7 +370,8 @@ class TaskWorker:
                 min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
                 f"采集第 {page_num} 页",
                 f"已获取喜欢的视频数据"
-            )
+            ),
+            check_cancelled=lambda: self._check_cancelled(task_id)
         )
 
         # Upsert all works (update if exists, insert if new)
@@ -390,6 +396,11 @@ class TaskWorker:
             logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} liked works")
             progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
             for i, work in enumerate(processed_works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
+                    break
+
                 try:
                     progress_manager.update(
                         task_id,
@@ -412,6 +423,11 @@ class TaskWorker:
             logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} liked works")
             progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
             for i, work in enumerate(processed_works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
+                    break
+
                 try:
                     comments = await self.comment_scraper.scrape_comments(
                         work.aweme_id, max_pages=3, on_page=None
@@ -484,7 +500,8 @@ class TaskWorker:
                 min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
                 f"采集第 {page_num} 页",
                 f"已获取收藏的视频数据"
-            )
+            ),
+            check_cancelled=lambda: self._check_cancelled(task_id)
         )
 
         # Upsert all works (update if exists, insert if new)
@@ -511,6 +528,11 @@ class TaskWorker:
             logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} favorite works")
             progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
             for i, work in enumerate(processed_works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
+                    break
+
                 try:
                     progress_manager.update(
                         task_id,
@@ -533,6 +555,11 @@ class TaskWorker:
             logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} favorite works")
             progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
             for i, work in enumerate(processed_works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
+                    break
+
                 try:
                     comments = await self.comment_scraper.scrape_comments(
                         work.aweme_id, max_pages=3, on_page=None
