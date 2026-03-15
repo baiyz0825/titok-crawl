@@ -443,35 +443,61 @@ class TaskWorker:
 
         # Collect creators if requested
         creators_collected = 0
+        creators_skipped = 0
         if collect_creators and processed_works:
             # Collect unique author sec_user_ids
             author_ids = list(set(w.sec_user_id for w in processed_works))
-            logger.info(f"[Task {task_id}] Collecting info for {len(author_ids)} unique creators")
-            progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
+            logger.info(f"[Task {task_id}] Found {len(author_ids)} unique creators from {len(processed_works)} works")
 
-            for i, author_id in enumerate(author_ids):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
-                    break
+            # Filter out authors that already exist in database (recently updated)
+            # Skip collection if user was updated within the last 7 days
+            from datetime import datetime, timedelta
+            recent_cutoff = datetime.now() - timedelta(days=7)
 
-                try:
-                    progress_manager.update(
-                        task_id,
-                        0.91 + 0.04 * (i + 1) / len(author_ids),
-                        f"采集作者 {i+1}/{len(author_ids)}",
-                        author_id
-                    )
-                    logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(author_ids)}: {author_id}")
-                    user = await self.user_scraper.scrape_profile(task_id, author_id)
-                    if user:
-                        await crud.upsert_user(user)
-                        creators_collected += 1
-                        logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+            authors_to_collect = []
+            for author_id in author_ids:
+                existing_user = await crud.get_user(author_id)
+                if existing_user and existing_user.updated_at:
+                    if existing_user.updated_at > recent_cutoff:
+                        logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                        creators_skipped += 1
                     else:
-                        logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+                        logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                        authors_to_collect.append(author_id)
+                else:
+                    authors_to_collect.append(author_id)
+
+            logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
+
+            if not authors_to_collect:
+                logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
+                creators_collected = 0
+            else:
+                progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
+
+                for i, author_id in enumerate(authors_to_collect):
+                    # Check if task is cancelled
+                    if await self._check_cancelled(task_id):
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                        break
+
+                    try:
+                        progress_manager.update(
+                            task_id,
+                            0.91 + 0.04 * (i + 1) / len(authors_to_collect),
+                            f"采集作者 {i+1}/{len(authors_to_collect)}",
+                            author_id
+                        )
+                        logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
+                        user = await self.user_scraper.scrape_profile(task_id, author_id)
+                        if user:
+                            await crud.upsert_user(user)
+                            creators_collected += 1
+                            logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                        else:
+                            logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
         # Speech recognition if requested
         transcript_count = 0
@@ -628,35 +654,61 @@ class TaskWorker:
 
         # Collect creators if requested
         creators_collected = 0
+        creators_skipped = 0
         if collect_creators and processed_works:
             # Collect unique author sec_user_ids
             author_ids = list(set(w.sec_user_id for w in processed_works))
-            logger.info(f"[Task {task_id}] Collecting info for {len(author_ids)} unique creators")
-            progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
+            logger.info(f"[Task {task_id}] Found {len(author_ids)} unique creators from {len(processed_works)} works")
 
-            for i, author_id in enumerate(author_ids):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
-                    break
+            # Filter out authors that already exist in database (recently updated)
+            # Skip collection if user was updated within the last 7 days
+            from datetime import datetime, timedelta
+            recent_cutoff = datetime.now() - timedelta(days=7)
 
-                try:
-                    progress_manager.update(
-                        task_id,
-                        0.91 + 0.04 * (i + 1) / len(author_ids),
-                        f"采集作者 {i+1}/{len(author_ids)}",
-                        author_id
-                    )
-                    logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(author_ids)}: {author_id}")
-                    user = await self.user_scraper.scrape_profile(task_id, author_id)
-                    if user:
-                        await crud.upsert_user(user)
-                        creators_collected += 1
-                        logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+            authors_to_collect = []
+            for author_id in author_ids:
+                existing_user = await crud.get_user(author_id)
+                if existing_user and existing_user.updated_at:
+                    if existing_user.updated_at > recent_cutoff:
+                        logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                        creators_skipped += 1
                     else:
-                        logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+                        logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                        authors_to_collect.append(author_id)
+                else:
+                    authors_to_collect.append(author_id)
+
+            logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
+
+            if not authors_to_collect:
+                logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
+                creators_collected = 0
+            else:
+                progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
+
+                for i, author_id in enumerate(authors_to_collect):
+                    # Check if task is cancelled
+                    if await self._check_cancelled(task_id):
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                        break
+
+                    try:
+                        progress_manager.update(
+                            task_id,
+                            0.91 + 0.04 * (i + 1) / len(authors_to_collect),
+                            f"采集作者 {i+1}/{len(authors_to_collect)}",
+                            author_id
+                        )
+                        logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
+                        user = await self.user_scraper.scrape_profile(task_id, author_id)
+                        if user:
+                            await crud.upsert_user(user)
+                            creators_collected += 1
+                            logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                        else:
+                            logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
         # Speech recognition if requested
         transcript_count = 0
