@@ -679,13 +679,30 @@ class UserScraper:
                     }
                 """)
                 await asyncio.sleep(2)  # Wait for the modal to open
+
+                # Scroll in the modal to trigger API call
+                # VERIFIED: The modal opens with user list, need to scroll to load data via API
+                logger.info("Scrolling modal to trigger API...")
+                await page.evaluate("""
+                    () => {
+                        // Find the modal/panel with following list
+                        const modal = document.querySelector('[role="tabpanel"]');
+                        if (modal) {
+                            // Scroll to bottom to trigger pagination/API call
+                            modal.scrollTop = modal.scrollHeight;
+                            return true;
+                        }
+                        return false;
+                    }
+                """)
+                await asyncio.sleep(1)  # Wait for API to be triggered
             except Exception as e:
                 logger.warning(f"Failed to click following tab: {e}")
 
             # Wait for the following list API to be called
             # The API endpoint is: /aweme/v1/web/user/following/list/
             logger.info("Waiting for following list API...")
-            data = await self.interceptor.wait_for("user/following/list", timeout=10)
+            data = await self.interceptor.wait_for("user/following/list", timeout=15)
 
             if not data:
                 logger.error("No data from following list API")
