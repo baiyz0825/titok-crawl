@@ -368,7 +368,6 @@ const form = ref({
   task_category: 'once',
   schedule_interval: 'daily',
   target: '',
-  max_pages: undefined,
   max_count: undefined,
   sync_types: [] as string[],
   recursive_depth: 1
@@ -496,7 +495,6 @@ async function createTask() {
     if (form.value.task_category === 'scheduled') {
       params.schedule_interval = form.value.schedule_interval
     }
-    if (form.value.max_pages) params.max_pages = form.value.max_pages
     if (form.value.max_count) params.max_count = form.value.max_count
 
     // 处理采集选项
@@ -537,7 +535,6 @@ function resetForm() {
     task_category: 'once',
     schedule_interval: 'daily',
     target: '',
-    max_pages: undefined,
     max_count: undefined,
     sync_types: [],
     recursive_depth: 1
