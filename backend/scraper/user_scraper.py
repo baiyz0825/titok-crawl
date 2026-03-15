@@ -644,6 +644,7 @@ class UserScraper:
 
         all_users = []
         page_count = 0
+        seen_user_ids = set()  # Track seen users to avoid duplicates
 
         try:
             # Navigate to user's following page
@@ -653,47 +654,115 @@ class UserScraper:
                 logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
                 return []
 
-            # Click on following tab
-            logger.info(f"Navigating to following tab for {sec_user_id}")
+            # Click on the "关注" element to open following list
+            logger.info(f"Clicking following tab for {sec_user_id}")
             try:
-                # Try to click the following tab
-                await page.evaluate(f"window.location.href = '{url}?showTab=following'")
-                await asyncio.sleep(2)
-            except Exception as e:
-                logger.warning(f"Failed to navigate to following tab: {e}")
+                # Wait for page to load
+                await page.wait_for_selector('text=关注', timeout=5000)
 
-            # Wait for following data
-            logger.info(f"Waiting for following list API...")
-            data = await self.interceptor.wait_for("following/list", timeout=15)
-            if not data:
-                # Try alternative API endpoint
-                logger.warning("No data from following/list, trying user/following")
-                data = await self.interceptor.wait_for("user/following", timeout=5)
-
-            if data:
-                user_list = data.get("user_list", [])
-                for user_info in user_list:
-                    user_dict = {
-                        "sec_user_id": user_info.get("sec_uid") or user_info.get("secUserId"),
-                        "nickname": user_info.get("nickname") or user_info.get("nickName"),
-                        "avatar_url": user_info.get("avatar_thumb", {}).get("url_list", [""])[0]
-                            if isinstance(user_info.get("avatar_thumb"), dict)
-                            else user_info.get("avatarUrl") or "",
-                        "douyin_id": user_info.get("unique_id") or user_info.get("shortId") or "",
+                # Click on the following count element (e.g., "关注 44")
+                # This opens the following list view
+                await page.evaluate("""
+                    () => {
+                        // Find the "关注" text element in the user profile header
+                        const elements = document.querySelectorAll('*');
+                        for (const el of elements) {
+                            if (el.childNodes.length === 1 &&
+                                el.textContent === '关注' &&
+                                el.nextSibling &&
+                                el.nextSibling.textContent.includes('关注')) {
+                                // Found the following element, click it
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
                     }
-                    if user_dict["sec_user_id"]:
-                        all_users.append(user_dict)
+                """)
+                await asyncio.sleep(3)  # Wait for the following list to load
+            except Exception as e:
+                logger.warning(f"Failed to click following tab: {e}")
 
-                page_count += 1
-                logger.info(f"Following Page {page_count}: got {len(user_list)} users")
-
-            # Pagination loop
+            # Extract users from DOM
             effective_max = max_count or 9999
-            has_more = data.get("has_more", 0) if data else 0
+
+            def extract_users_from_dom():
+                """Extract user data from the DOM."""
+                users = []
+                try:
+                    # Find user cards in the following list
+                    user_cards = page.evaluate("""
+                        () => {
+                            const users = [];
+                            // Look for user links with sec_user_id in the href
+                            const links = document.querySelectorAll('a[href*="/user/"]');
+                            for (const link of links) {
+                                const href = link.getAttribute('href');
+                                if (href && href.includes('/user/')) {
+                                    // Extract sec_user_id from URL
+                                    const match = href.match(/\/user\/([^/?]+)/);
+                                    if (match) {
+                                        const secUid = match[1];
+                                        // Find user info from the card
+                                        const card = link.closest('[role="tabpanel"]') || link.closest('div');
+                                        if (card) {
+                                            // Try to find nickname
+                                            const nicknameEl = card.querySelector('[class*="nickname"]') ||
+                                                                 card.querySelector('[class*="name"]') ||
+                                                                 link;
+                                            const nickname = nicknameEl ? nicknameEl.textContent.trim() : '';
+
+                                            // Try to find avatar
+                                            const avatarEl = card.querySelector('img[src*="avatar"]');
+                                            const avatarUrl = avatarEl ? avatarEl.src : '';
+
+                                            // Try to find douyin_id
+                                            const idEl = card.querySelector('[class*="unique"]') ||
+                                                       card.querySelector('[class*="id"]');
+                                            const douyinId = idEl ? idEl.textContent.trim() : '';
+
+                                            if (secUid && nickname) {
+                                                users.push({
+                                                    sec_user_id: secUid,
+                                                    nickname: nickname,
+                                                    avatar_url: avatarUrl,
+                                                    douyin_id: douyinId
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return users;
+                        }
+                    """)
+
+                    for user in user_cards:
+                        if user['sec_user_id'] not in seen_user_ids:
+                            seen_user_ids.add(user['sec_user_id'])
+                            users.append(user)
+
+                except Exception as e:
+                    logger.warning(f"Error extracting users from DOM: {e}")
+
+                return users
+
+            # Initial extraction
+            users = extract_users_from_dom()
+            if users:
+                all_users.extend(users)
+                page_count += 1
+                logger.info(f"Following Page {page_count}: got {len(users)} users")
+
             if on_page:
                 on_page(page_count, effective_max)
 
-            while has_more and len(all_users) < effective_max:
+            # Pagination loop - scroll and extract more users
+            last_count = 0
+            no_new_data_count = 0
+            max_no_new_data = 3  # Stop after 3 consecutive scrolls with no new data
+
+            while len(all_users) < effective_max:
                 # Random delay
                 delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
                 await asyncio.sleep(delay)
@@ -704,41 +773,40 @@ class UserScraper:
                     if not resolved:
                         break
 
-                # Scroll the route-scroll-container to trigger next page
+                # Scroll to load more users
                 await page.evaluate("""
                     () => {
-                        const container = document.querySelector('.route-scroll-container');
-                        if (container) {
-                            container.scrollTop = container.scrollHeight;
+                        // Find the scrollable container in the following tab
+                        const tabpanel = document.querySelector('[role="tabpanel"]');
+                        if (tabpanel) {
+                            tabpanel.scrollTop = tabpanel.scrollHeight;
+                        } else {
+                            // Fallback to main scroll container
+                            const container = document.querySelector('.route-scroll-container');
+                            if (container) {
+                                container.scrollTop = container.scrollHeight;
+                            }
                         }
                     }
                 """)
-                await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(2000)  # Wait for new content to load
 
-                data = await self.interceptor.wait_for("following/list", timeout=10)
-                if not data:
-                    data = await self.interceptor.wait_for("user/following", timeout=5)
-                if not data:
-                    break
+                # Extract new users
+                users = extract_users_from_dom()
 
-                user_list = data.get("user_list", [])
-                for user_info in user_list:
-                    user_dict = {
-                        "sec_user_id": user_info.get("sec_uid") or user_info.get("secUserId"),
-                        "nickname": user_info.get("nickname") or user_info.get("nickName"),
-                        "avatar_url": user_info.get("avatar_thumb", {}).get("url_list", [""])[0]
-                            if isinstance(user_info.get("avatar_thumb"), dict)
-                            else user_info.get("avatarUrl") or "",
-                        "douyin_id": user_info.get("unique_id") or user_info.get("shortId") or "",
-                    }
-                    if user_dict["sec_user_id"]:
-                        all_users.append(user_dict)
+                if len(users) == last_count:
+                    no_new_data_count += 1
+                    if no_new_data_count >= max_no_new_data:
+                        logger.info(f"No new data after {max_no_new_data} scrolls, stopping pagination")
+                        break
+                else:
+                    no_new_data_count = 0
+                    page_count += 1
+                    logger.info(f"Following Page {page_count}: got {len(users)} users (total: {len(all_users)})")
+                    if on_page:
+                        on_page(page_count, effective_max)
 
-                page_count += 1
-                has_more = data.get("has_more", 0)
-                logger.info(f"Following Page {page_count}: got {len(user_list)} users (total: {len(all_users)})")
-                if on_page:
-                    on_page(page_count, effective_max)
+                last_count = len(users)
 
             # Trim to max_count
             if max_count and len(all_users) > max_count:
