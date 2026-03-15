@@ -91,7 +91,39 @@
         </div>
         <div class="toolbar-right">
           <el-button type="primary" @click="showCreateDialog = true">新建任务</el-button>
-          <el-button v-if="selectedTasks.length" type="danger" plain @click="batchDelete">删除选中</el-button>
+          <template v-if="selectedTasks.length">
+            <el-dropdown split-button type="default" @click="handleBatchAction('pause')" style="margin-left: 8px;">
+              <el-button>批量操作</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="handleBatchAction('pause')">
+                    <el-icon><VideoPause /></el-icon>
+                    <span>批量暂停</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="handleBatchAction('resume')">
+                    <el-icon><VideoPlay /></el-icon>
+                    <span>批量继续</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="handleBatchAction('retry')">
+                    <el-icon><RefreshRight /></el-icon>
+                    <span>批量重试</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="handleBatchAction('cancel')">
+                    <el-icon><CircleClose /></el-icon>
+                    <span>批量取消</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="batchExport" divided>
+                    <el-icon><Download /></el-icon>
+                    <span>导出数据</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="batchDelete" divided style="color: #ef4444;">
+                    <el-icon><Delete /></el-icon>
+                    <span>批量删除</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
           <el-button @click="fetchTasks" :loading="loading">刷新</el-button>
         </div>
       </div>
@@ -535,6 +567,75 @@ async function batchDelete() {
   await client.post('/tasks/batch-delete', { task_ids: ids })
   ElMessage.success('删除成功')
   fetchTasks()
+}
+
+async function handleBatchAction(action: string) {
+  const ids = selectedTasks.value.map(t => t.id)
+  const actionMap: Record<string, string> = {
+    pause: '暂停',
+    resume: '继续',
+    retry: '重试',
+    cancel: '取消'
+  }
+  const actionName = actionMap[action] || action
+
+  await ElMessageBox.confirm(
+    `确定${actionName} ${ids.length} 个任务？`,
+    '确认操作',
+    { type: 'warning' }
+  )
+
+  try {
+    let endpoint = ''
+    switch (action) {
+      case 'pause':
+        endpoint = '/tasks/batch-pause'
+        break
+      case 'resume':
+        endpoint = '/tasks/batch-resume'
+        break
+      case 'retry':
+        endpoint = '/tasks/batch-retry'
+        break
+      case 'cancel':
+        endpoint = '/tasks/batch-cancel'
+        break
+    }
+    await client.post(endpoint, { task_ids: ids })
+    ElMessage.success(`${actionName}成功`)
+    fetchTasks()
+    // Clear selection after successful batch operation
+    selectedTasks.value = []
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || `${actionName}失败`)
+  }
+}
+
+async function batchExport() {
+  const ids = selectedTasks.value.map(t => t.id)
+  const tasksData = selectedTasks.value.map(t => ({
+    id: t.id,
+    type: t.task_type,
+    status: t.status,
+    target: t.target,
+    created_at: t.created_at,
+    completed_at: t.completed_at,
+    result: t.result
+  }))
+
+  // Convert to JSON and download
+  const dataStr = JSON.stringify(tasksData, null, 2)
+  const blob = new Blob([dataStr], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `tasks_export_${new Date().getTime()}.json`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+
+  ElMessage.success(`已导出 ${ids.length} 个任务数据`)
 }
 
 // 创建任务相关方法

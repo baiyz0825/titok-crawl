@@ -159,6 +159,63 @@ async def delete_tasks_batch(req: BatchDeleteTasksRequest):
     return {"deleted": len(req.task_ids)}
 
 
+class BatchTaskIdsRequest(BaseModel):
+    task_ids: list[int]
+
+
+@router.post("/batch-pause")
+async def pause_tasks_batch(req: BatchTaskIdsRequest):
+    """Pause multiple running tasks."""
+    paused = 0
+    for task_id in req.task_ids:
+        task = await crud.get_task(task_id)
+        if task and task.status == "running":
+            await crud.update_task(task_id, status="paused")
+            paused += 1
+    return {"paused": paused}
+
+
+@router.post("/batch-resume")
+async def resume_tasks_batch(req: BatchTaskIdsRequest):
+    """Resume multiple paused tasks."""
+    resumed = 0
+    for task_id in req.task_ids:
+        task = await crud.get_task(task_id)
+        if task and task.status == "paused":
+            await crud.update_task(task_id, status="pending")
+            resumed += 1
+    # Trigger scheduler to pick up resumed tasks
+    return {"resumed": resumed}
+
+
+@router.post("/batch-retry")
+async def retry_tasks_batch(req: BatchTaskIdsRequest):
+    """Retry multiple failed tasks."""
+    retried = 0
+    for task_id in req.task_ids:
+        task = await crud.get_task(task_id)
+        if task and task.status == "failed":
+            await crud.update_task(
+                task_id,
+                status="pending",
+                retry_count=0,
+                error_message=None
+            )
+            retried += 1
+    return {"retried": retried}
+
+
+@router.post("/batch-cancel")
+async def cancel_tasks_batch(req: BatchTaskIdsRequest):
+    """Cancel multiple pending or running tasks."""
+    cancelled = 0
+    for task_id in req.task_ids:
+        success = await scheduler.cancel(task_id)
+        if success:
+            cancelled += 1
+    return {"cancelled": cancelled}
+
+
 @router.get("/{task_id}")
 async def get_task(task_id: int):
     """Get task detail."""
