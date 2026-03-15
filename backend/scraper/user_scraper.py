@@ -661,15 +661,28 @@ class UserScraper:
                 await page.wait_for_selector('text=关注', timeout=5000)
 
                 # Click on the "关注" link element in the user profile header
-                # The element has class "uz1VJwFY" and is an <A> tag
+                # Use a more reliable selector based on text content and position
                 await page.evaluate("""
                     () => {
-                        // Find the <A> element with class containing "uz1VJwFY"
-                        const links = document.querySelectorAll('a[class*="uz1VJwFY"]');
-                        for (const link of links) {
-                            if (link.textContent.includes('关注')) {
-                                link.click();
-                                return true;
+                        // Find all links containing "关注" text
+                        const allLinks = document.querySelectorAll('a');
+                        for (const link of allLinks) {
+                            const text = link.textContent.trim();
+                            // Look for the "关注" link in the user profile section
+                            // It should be near the user avatar and contain only "关注" or "关注" + number
+                            if (text === '关注' || text.startsWith('关注')) {
+                                // Verify it's in the user profile header by checking if there's a sibling with "粉丝"
+                                const parent = link.parentElement;
+                                if (parent) {
+                                    const siblings = parent.querySelectorAll('a');
+                                    for (const sibling of siblings) {
+                                        if (sibling.textContent.includes('粉丝')) {
+                                            // Found the right section - click the "关注" link
+                                            link.click();
+                                            return true;
+                                        }
+                                    }
+                                }
                             }
                         }
                         return false;
