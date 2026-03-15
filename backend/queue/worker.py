@@ -364,7 +364,7 @@ class TaskWorker:
         progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
 
         works = await self.user_scraper.scrape_likes(
-            task_id, sec_user_id, max_pages=max_pages,
+            task_id, sec_user_id, max_pages=max_pages, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
@@ -494,7 +494,7 @@ class TaskWorker:
         progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
 
         works = await self.user_scraper.scrape_favorites(
-            task_id, sec_user_id, max_pages=max_pages,
+            task_id, sec_user_id, max_pages=max_pages, max_count=max_count,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
                 min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
