@@ -656,53 +656,52 @@ class UserScraper:
 
             # Click on the "关注" element to open following list modal
             logger.info(f"Clicking following tab for {sec_user_id}")
-            try:
-                # Wait for page to load
-                await page.wait_for_selector('text=关注', timeout=5000)
 
-                # Click on the "关注" button to open following list modal
-                # VERIFIED in chrome-devtools: This selector successfully finds and clicks the element
-                await page.evaluate("""
-                    () => {
-                        // Find the <P> element containing "关注" followed by a number (e.g., "关注 43")
-                        const allPs = document.querySelectorAll('p');
-                        for (const p of allPs) {
-                            const text = p.textContent.trim();
-                            // Match "关注 43", "关注 0", etc. (关注 + whitespace + digits)
-                            // Also ensure it's not a long text that just happens to contain "关注"
-                            if (/关注\\s*\\d+/.test(text) && text.length < 10) {
-                                p.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                """)
-                await asyncio.sleep(2)  # Wait for the modal to open
+            # Wait for page to load
+            await page.wait_for_selector('text=关注', timeout=5000)
 
-                # Scroll in the modal to trigger API call
-                # VERIFIED: The modal opens with user list, need to scroll to load data via API
-                logger.info("Scrolling modal to trigger API...")
-                await page.evaluate("""
-                    () => {
-                        // Find the modal/panel with following list
-                        const modal = document.querySelector('[role="tabpanel"]');
-                        if (modal) {
-                            // Scroll to bottom to trigger pagination/API call
-                            modal.scrollTop = modal.scrollHeight;
+            # Start waiting for API FIRST (in background), then click
+            # This ensures we don't miss the API call that happens immediately after clicking
+            logger.info("Waiting for following list API...")
+            api_wait_task = asyncio.create_task(
+                self.interceptor.wait_for("user/following/list", timeout=15)
+            )
+
+            # Give the interceptor a moment to start listening
+            await asyncio.sleep(0.1)
+
+            # Now click the "关注" button
+            # VERIFIED in chrome-devtools: This selector successfully finds and clicks the element
+            clicked = await page.evaluate("""
+                () => {
+                    // Find the <P> element containing "关注" followed by a number (e.g., "关注 43")
+                    const allPs = document.querySelectorAll('p');
+                    for (const p of allPs) {
+                        const text = p.textContent.trim();
+                        // Match "关注 43", "关注 0", etc. (关注 + whitespace + digits)
+                        // Also ensure it's not a long text that just happens to contain "关注"
+                        if (/关注\\s*\\d+/.test(text) && text.length < 10) {
+                            p.click();
                             return true;
                         }
-                        return false;
                     }
-                """)
-                await asyncio.sleep(1)  # Wait for API to be triggered
-            except Exception as e:
-                logger.warning(f"Failed to click following tab: {e}")
+                    return false;
+                }
+            """)
 
-            # Wait for the following list API to be called
-            # The API endpoint is: /aweme/v1/web/user/following/list/
-            logger.info("Waiting for following list API...")
-            data = await self.interceptor.wait_for("user/following/list", timeout=15)
+            if not clicked:
+                logger.warning("Failed to click following button")
+                api_wait_task.cancel()
+                return []
+
+            logger.info("Clicked successfully, waiting for API response...")
+
+            # Wait for the API call (already started in background)
+            try:
+                data = await api_wait_task
+            except asyncio.TimeoutError:
+                logger.error("Timeout waiting for following list API")
+                return []
 
             if not data:
                 logger.error("No data from following list API")
