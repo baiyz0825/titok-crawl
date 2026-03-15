@@ -315,7 +315,7 @@ class UserScraper:
             logger.info(f"Navigating to likes page: {url}")
             ok = await engine.safe_goto(page, url)
             if not ok:
-                logger.error("Failed to load likes page (captcha timeout)")
+                logger.error("Failed to load likes page (navigation failed or captcha timeout)")
                 return []
 
             logger.info("Page loaded, waiting for aweme/favorite API (timeout=15s)...")
@@ -480,7 +480,7 @@ class UserScraper:
             logger.info(f"Navigating to favorites page: {url}")
             ok = await engine.safe_goto(page, url)
             if not ok:
-                logger.error("Failed to load favorites page (captcha timeout)")
+                logger.error("Failed to load favorites page (navigation failed or captcha timeout)")
                 return []
 
             logger.info("Page loaded, waiting for aweme/favorite API (timeout=15s)...")

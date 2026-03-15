@@ -155,15 +155,20 @@ class ScraperEngine:
         """
         async with self._pool_lock:
             if task_id not in self._page_pool:
-                logger.warning(f"Task #{task_id} has no page to release")
+                # Silently return - page may have already been released or was never acquired
+                logger.debug(f"Task #{task_id} has no page to release (may have been released already)")
                 return
 
             page = self._page_pool.pop(task_id)
             self._page_locks.pop(task_id, None)
 
             try:
-                await page.close()
-                logger.info(f"Task #{task_id} page closed (remaining pages: {len(self._page_pool)})")
+                # Check if page is still valid before closing
+                if page.is_closed():
+                    logger.info(f"Task #{task_id} page was already closed (remaining pages: {len(self._page_pool)})")
+                else:
+                    await page.close()
+                    logger.info(f"Task #{task_id} page closed (remaining pages: {len(self._page_pool)})")
             except Exception as e:
                 logger.warning(f"Failed to close page for task #{task_id}: {e}")
 
@@ -353,24 +358,30 @@ class ScraperEngine:
     async def safe_goto(self, page: Page, url: str, **kwargs) -> bool:
         """Navigate to URL and handle captcha if it appears.
         Returns True if page loaded successfully (captcha resolved or not present).
+        Returns False if navigation fails (aborted, timeout, etc.).
         """
-        # Random pre-navigation delay to mimic human behavior
-        pre_delay = random.uniform(1.0, 3.0)
-        await page.wait_for_timeout(int(pre_delay * 1000))
+        try:
+            # Random pre-navigation delay to mimic human behavior
+            pre_delay = random.uniform(1.0, 3.0)
+            await page.wait_for_timeout(int(pre_delay * 1000))
 
-        kwargs.setdefault("wait_until", "domcontentloaded")
-        await page.goto(url, **kwargs)
+            kwargs.setdefault("wait_until", "domcontentloaded")
+            await page.goto(url, **kwargs)
 
-        # Randomized post-navigation wait
-        post_delay = random.uniform(1.5, 3.0)
-        await page.wait_for_timeout(int(post_delay * 1000))
+            # Randomized post-navigation wait
+            post_delay = random.uniform(1.5, 3.0)
+            await page.wait_for_timeout(int(post_delay * 1000))
 
-        if await self.detect_captcha(page):
-            resolved = await self.wait_for_captcha_resolve(page)
-            if not resolved:
-                return False
+            if await self.detect_captcha(page):
+                resolved = await self.wait_for_captcha_resolve(page)
+                if not resolved:
+                    return False
 
-        return True
+            return True
+        except Exception as e:
+            # Catch navigation errors (ERR_ABORTED, ERR_CONNECTION_CLOSED, etc.)
+            logger.warning(f"Navigation failed for {url}: {e}")
+            return False
 
     async def wait_for_login(self) -> bool:
         """Navigate to Douyin and wait for user to scan QR code.
