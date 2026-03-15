@@ -273,11 +273,12 @@
           <span style="font-size: 12px; color: #94a3b8; margin-top: 4px; display: block;">留空则采集全部</span>
         </el-form-item>
 
-        <el-form-item v-if="['user_works', 'user_all'].includes(batchTaskForm.task_type)" label="采集选项">
+        <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites'].includes(batchTaskForm.task_type)" label="采集选项">
           <el-checkbox-group v-model="batchTaskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
-            <el-checkbox label="refresh_info">更新作品信息（简介、点赞、播放、收藏等）</el-checkbox>
+            <el-checkbox v-if="['user_works', 'user_all'].includes(batchTaskForm.task_type)" label="refresh_info">更新作品信息（简介、点赞、播放、收藏等）</el-checkbox>
             <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
             <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
+            <el-checkbox v-if="['user_likes', 'user_favorites'].includes(batchTaskForm.task_type)" label="collect_creators">采集作者信息</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
 
@@ -510,6 +511,9 @@ async function submitBatchTasks() {
         }
         if (batchTaskForm.value.sync_types.includes('download_media')) {
           params.download_media = true
+        }
+        if (batchTaskForm.value.sync_types.includes('collect_creators')) {
+          params.collect_creators = true
         }
         if (batchTaskForm.value.sync_types.includes('collect_profile')) {
           params.collect_profile = true

@@ -369,6 +369,14 @@
           </el-checkbox-group>
         </el-form-item>
 
+        <el-form-item v-if="['user_likes', 'user_favorites'].includes(taskForm.task_type)" label="采集选项">
+          <el-checkbox-group v-model="taskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
+            <el-checkbox label="scrape_comments">采集评论数据</el-checkbox>
+            <el-checkbox label="download_media">下载媒体文件（封面图/视频/图文图片）</el-checkbox>
+            <el-checkbox label="collect_creators">采集视频作者信息（将视频发布者的资料一并采集）</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+
         <el-form-item v-if="taskForm.task_type === 'user_following'" label="关注列表选项">
           <el-checkbox-group v-model="taskForm.sync_types" style="display: flex; flex-direction: column; gap: 8px">
             <el-checkbox value="collect_profile" label="采集用户资料（头像、昵称、简介等）" />
@@ -661,6 +669,9 @@ async function submitTask() {
     if (taskForm.value.sync_types.includes('collect_profile')) {
       params.collect_profile = true
     }
+    if (taskForm.value.sync_types.includes('collect_creators')) {
+      params.collect_creators = true
+    }
     if (taskForm.value.sync_types.includes('recursive')) {
       params.recursive = true
       params.recursive_depth = taskForm.value.recursive_depth || 1
@@ -793,10 +804,40 @@ onMounted(fetchWorks)
 .rescrape-loading { min-height: 60px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 13px; }
 
 /* Create task dialog styles */
-.user-option { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
-.user-option-info { display: flex; flex-direction: column; min-width: 0; }
-.user-option-name { font-size: 13px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.user-option-id { font-size: 11px; color: #94a3b8; }
+.user-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  min-height: 40px;
+}
+.user-option-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.4;
+}
+.user-option-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+.user-option-id {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* 修复下拉选项重叠问题 */
+:deep(.el-select-dropdown__item) {
+  padding: 8px 12px !important;
+  height: auto !important;
+  min-height: 48px !important;
+}
 
 @media (max-width: 768px) {
   .table-toolbar { flex-direction: column; align-items: flex-start; }

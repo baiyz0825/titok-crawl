@@ -111,11 +111,16 @@ class UserScraper:
             is_current_user = (current_user_id == sec_user_id)
 
             # 如果已经在目标用户页面，不需要重新导航
-            target_in_url = f"/user/{sec_user_id}" if not is_current_user else "/user/self"
-            already_on_page = (
-                (is_current_user and "/user/self" in current_url) or
-                (not is_current_user and f"/user/{sec_user_id}" in current_url)
-            )
+            # 注意：需要精确匹配，避免 /user/self?showTab=like 被误判为 /user/self
+            if is_current_user:
+                # 当前用户：必须在 /user/self 且不能有 showTab 参数
+                already_on_page = ("/user/self" in current_url and
+                                   "showTab" not in current_url)
+            else:
+                # 其他用户：必须在 /user/{sec_user_id} 且不能有 showTab 参数
+                target_url = f"/user/{sec_user_id}"
+                already_on_page = (target_url in current_url and
+                                   "showTab" not in current_url)
 
             if not already_on_page:
                 # 需要导航到目标页面
@@ -193,7 +198,8 @@ class UserScraper:
             # Navigate to user page if not already there
             current_url = page.url
             user_url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
-            if sec_user_id not in current_url:
+            # 检查是否已经在目标用户的主页（不能是 showTab=like 等子页面）
+            if sec_user_id not in current_url or "showTab" in current_url:
                 logger.info(f"Navigating to {user_url}")
                 ok = await engine.safe_goto(page, user_url)
                 if not ok:
@@ -248,8 +254,15 @@ class UserScraper:
                     if not resolved:
                         break
 
-                # Scroll to bottom to trigger next page load
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                # Scroll the route-scroll-container to trigger next page load
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(1000)
 
                 data = await self.interceptor.wait_for("aweme/post", timeout=10)
@@ -285,7 +298,7 @@ class UserScraper:
                 logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_likes(
-        self, task_id: int, sec_user_id: str, max_pages: int | None = None,
+        self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None,
     ) -> list[Work]:
         """Scrape current user's liked videos (喜欢) with pagination."""
@@ -332,6 +345,11 @@ class UserScraper:
                 on_page(page_count, effective_max)
 
             while has_more and page_count < effective_max:
+                # Check max_count limit before continuing
+                if max_count and len(all_works) >= max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
+                    break
+
                 # Random delay
                 delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
                 await asyncio.sleep(delay)
@@ -343,23 +361,52 @@ class UserScraper:
                         logger.warning("Captcha detected and not resolved, stopping pagination")
                         break
 
-                # Improved scrolling strategy: scroll gradually to trigger lazy loading
+                # Improved scrolling strategy: scroll the route-scroll-container to trigger lazy loading
                 logger.info("Scrolling to load more content...")
 
-                # Method 1: Scroll to near bottom (not absolute bottom to avoid premature stop)
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight - 500)")
+                # Find and scroll the correct scrollable container
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            // Method 1: Scroll to near bottom
+                            container.scrollTop = container.scrollHeight - 800;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(2000)
 
                 # Method 2: Scroll to absolute bottom
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(2000)
 
-                # Method 3: Small incremental scroll to trigger lazy loading
-                await page.evaluate("window.scrollBy(0, 300)")
+                # Method 3: Small incremental scroll
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop += 300;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(1000)
 
                 # Method 4: Scroll back to bottom
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(3000)  # Longer wait for API to respond
 
                 data = await self.interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
@@ -393,6 +440,11 @@ class UserScraper:
                 if on_page:
                     on_page(page_count, effective_max)
 
+            # Trim to max_count if specified
+            if max_count and len(all_works) > max_count:
+                logger.info(f"Trimming works from {len(all_works)} to {max_count}")
+                all_works = all_works[:max_count]
+
             logger.info(f"Scraped {len(all_works)} liked videos")
             return all_works
 
@@ -406,7 +458,7 @@ class UserScraper:
                 logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_favorites(
-        self, task_id: int, sec_user_id: str, max_pages: int | None = None,
+        self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None,
     ) -> list[Work]:
         """Scrape current user's favorite videos (收藏) with pagination."""
@@ -452,6 +504,11 @@ class UserScraper:
                 on_page(page_count, effective_max)
 
             while has_more and page_count < effective_max:
+                # Check max_count limit before continuing
+                if max_count and len(all_works) >= max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
+                    break
+
                 # Random delay
                 delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
                 await asyncio.sleep(delay)
@@ -463,23 +520,52 @@ class UserScraper:
                         logger.warning("Captcha detected and not resolved, stopping pagination")
                         break
 
-                # Improved scrolling strategy: scroll gradually to trigger lazy loading
+                # Improved scrolling strategy: scroll the route-scroll-container to trigger lazy loading
                 logger.info("Scrolling to load more content...")
 
-                # Method 1: Scroll to near bottom (not absolute bottom to avoid premature stop)
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight - 500)")
+                # Find and scroll the correct scrollable container
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            // Method 1: Scroll to near bottom
+                            container.scrollTop = container.scrollHeight - 800;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(2000)
 
                 # Method 2: Scroll to absolute bottom
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(2000)
 
-                # Method 3: Small incremental scroll to trigger lazy loading
-                await page.evaluate("window.scrollBy(0, 300)")
+                # Method 3: Small incremental scroll
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop += 300;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(1000)
 
                 # Method 4: Scroll back to bottom
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(3000)  # Longer wait for API to respond
 
                 data = await self.interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
@@ -512,6 +598,11 @@ class UserScraper:
                 logger.info(f"Favorites Page {page_count}: got {len(works)} works (total: {len(all_works)})")
                 if on_page:
                     on_page(page_count, effective_max)
+
+            # Trim to max_count if specified
+            if max_count and len(all_works) > max_count:
+                logger.info(f"Trimming works from {len(all_works)} to {max_count}")
+                all_works = all_works[:max_count]
 
             logger.info(f"Scraped {len(all_works)} favorite videos")
             return all_works
@@ -603,8 +694,15 @@ class UserScraper:
                     if not resolved:
                         break
 
-                # Scroll to trigger next page
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                # Scroll the route-scroll-container to trigger next page
+                await page.evaluate("""
+                    () => {
+                        const container = document.querySelector('.route-scroll-container');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                """)
                 await page.wait_for_timeout(1000)
 
                 data = await self.interceptor.wait_for("following/list", timeout=10)

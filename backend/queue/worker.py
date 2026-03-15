@@ -354,13 +354,15 @@ class TaskWorker:
         max_pages = params.get("max_pages")
         max_count = params.get("max_count")
         collect_creators = params.get("collect_creators", False)
+        download_media = params.get("download_media", False)
+        scrape_comments = params.get("scrape_comments", False)
         progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
 
         works = await self.user_scraper.scrape_likes(
             task_id, sec_user_id, max_pages=max_pages,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
-                min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
+                min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
                 f"采集第 {page_num} 页",
                 f"已获取喜欢的视频数据"
             )
@@ -382,18 +384,58 @@ class TaskWorker:
             if max_count and len(processed_works) >= max_count:
                 break
 
+        # Download media if requested
+        download_count = 0
+        if download_media and processed_works:
+            logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} liked works")
+            progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
+            for i, work in enumerate(processed_works):
+                try:
+                    progress_manager.update(
+                        task_id,
+                        0.75 + 0.1 * (i + 1) / len(processed_works),
+                        f"下载媒体 {i+1}/{len(processed_works)}",
+                        work.aweme_id
+                    )
+                    await self.media_downloader.download_work_media(
+                        work.aweme_id, work.sec_user_id, work.extra_data
+                    )
+                    download_count += 1
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} liked works")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+
+        # Scrape comments if requested
+        comments_count = 0
+        if scrape_comments and processed_works:
+            logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} liked works")
+            progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
+            for i, work in enumerate(processed_works):
+                try:
+                    comments = await self.comment_scraper.scrape_comments(
+                        work.aweme_id, max_pages=3, on_page=None
+                    )
+                    # Save comments
+                    for comment in comments:
+                        await crud.upsert_comment(comment)
+                    comments_count += len(comments)
+                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
         # Collect creators if requested
         creators_collected = 0
         if collect_creators and processed_works:
             # Collect unique author sec_user_ids
             author_ids = list(set(w.sec_user_id for w in processed_works))
-            progress_manager.update(task_id, 0.95, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
+            progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
 
             for i, author_id in enumerate(author_ids):
                 try:
                     progress_manager.update(
                         task_id,
-                        0.95 + 0.04 * (i + 1) / len(author_ids),
+                        0.91 + 0.04 * (i + 1) / len(author_ids),
                         f"采集作者 {i+1}/{len(author_ids)}",
                         author_id
                     )
@@ -405,6 +447,10 @@ class TaskWorker:
                     logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
         extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
+        if download_count > 0:
+            extra_info += f"，下载 {download_count} 个媒体"
+        if comments_count > 0:
+            extra_info += f"，{comments_count} 条评论"
         if creators_collected > 0:
             extra_info += f"，采集作者 {creators_collected} 个"
 
@@ -413,6 +459,8 @@ class TaskWorker:
             "total": len(processed_works),
             "new": new_count,
             "updated": updated_count,
+            "media_downloaded": download_count,
+            "comments_count": comments_count,
             "creators_collected": creators_collected,
             "types": {
                 "video": sum(1 for w in processed_works if w.type == "video"),
@@ -425,13 +473,15 @@ class TaskWorker:
         max_pages = params.get("max_pages")
         max_count = params.get("max_count")
         collect_creators = params.get("collect_creators", False)
+        download_media = params.get("download_media", False)
+        scrape_comments = params.get("scrape_comments", False)
         progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
 
         works = await self.user_scraper.scrape_favorites(
             task_id, sec_user_id, max_pages=max_pages,
             on_page=lambda page_num, total: progress_manager.update(
                 task_id,
-                min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
+                min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
                 f"采集第 {page_num} 页",
                 f"已获取收藏的视频数据"
             )
@@ -455,18 +505,58 @@ class TaskWorker:
             if max_count and len(processed_works) >= max_count:
                 break
 
+        # Download media if requested
+        download_count = 0
+        if download_media and processed_works:
+            logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} favorite works")
+            progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
+            for i, work in enumerate(processed_works):
+                try:
+                    progress_manager.update(
+                        task_id,
+                        0.75 + 0.1 * (i + 1) / len(processed_works),
+                        f"下载媒体 {i+1}/{len(processed_works)}",
+                        work.aweme_id
+                    )
+                    await self.media_downloader.download_work_media(
+                        work.aweme_id, work.sec_user_id, work.extra_data
+                    )
+                    download_count += 1
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} favorite works")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+
+        # Scrape comments if requested
+        comments_count = 0
+        if scrape_comments and processed_works:
+            logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} favorite works")
+            progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
+            for i, work in enumerate(processed_works):
+                try:
+                    comments = await self.comment_scraper.scrape_comments(
+                        work.aweme_id, max_pages=3, on_page=None
+                    )
+                    # Save comments
+                    for comment in comments:
+                        await crud.upsert_comment(comment)
+                    comments_count += len(comments)
+                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
         # Collect creators if requested
         creators_collected = 0
         if collect_creators and processed_works:
             # Collect unique author sec_user_ids
             author_ids = list(set(w.sec_user_id for w in processed_works))
-            progress_manager.update(task_id, 0.95, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
+            progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(author_ids)} 个作者信息")
 
             for i, author_id in enumerate(author_ids):
                 try:
                     progress_manager.update(
                         task_id,
-                        0.95 + 0.04 * (i + 1) / len(author_ids),
+                        0.91 + 0.04 * (i + 1) / len(author_ids),
                         f"采集作者 {i+1}/{len(author_ids)}",
                         author_id
                     )
@@ -478,6 +568,10 @@ class TaskWorker:
                     logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
 
         extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
+        if download_count > 0:
+            extra_info += f"，下载 {download_count} 个媒体"
+        if comments_count > 0:
+            extra_info += f"，{comments_count} 条评论"
         if creators_collected > 0:
             extra_info += f"，采集作者 {creators_collected} 个"
 
@@ -486,6 +580,8 @@ class TaskWorker:
             "total": len(processed_works),
             "new": new_count,
             "updated": updated_count,
+            "media_downloaded": download_count,
+            "comments_count": comments_count,
             "creators_collected": creators_collected,
             "types": {
                 "video": sum(1 for w in processed_works if w.type == "video"),
