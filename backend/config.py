@@ -27,7 +27,9 @@ class Settings:
     LOG_FILE = DATA_DIR / "logs" / "app.jsonl"
 
     # Task queue
-    MAX_CONCURRENT_TASKS = 10  # 支持同时执行10个任务
+    # 降低并发任务数以减少资源占用和页面卡顿
+    # 可通过环境变量 MAX_CONCURRENT_TASKS 调整（推荐值：1-5）
+    MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "3"))
 
     # Server ports (从环境变量读取，支持高位端口避免冲突)
     API_HOST = "0.0.0.0"
