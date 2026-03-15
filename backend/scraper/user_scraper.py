@@ -630,7 +630,7 @@ class UserScraper:
         self, task_id: int, sec_user_id: str, max_count: int | None = None,
         on_page: Callable | None = None,
     ) -> list[dict]:
-        """Scrape user's following list with pagination.
+        """Scrape user's following list with pagination using API interception.
 
         Returns list of user info dicts with keys:
         - sec_user_id
@@ -654,17 +654,17 @@ class UserScraper:
                 logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
                 return []
 
-            # Click on the "关注" element to open following list
+            # Click on the "关注" element to open following list modal
             logger.info(f"Clicking following tab for {sec_user_id}")
             try:
                 # Wait for page to load
                 await page.wait_for_selector('text=关注', timeout=5000)
 
-                # Click on the following count element (e.g., "关注 44")
-                # This opens the following list view
+                # Click on the "关注" element (the one that shows the following count)
+                # This opens the following list modal
                 await page.evaluate("""
                     () => {
-                        // Find the "关注" text element in the user profile header
+                        // Find and click the "关注" element in the user profile header
                         const elements = document.querySelectorAll('*');
                         for (const el of elements) {
                             if (el.childNodes.length === 1 &&
@@ -679,89 +679,79 @@ class UserScraper:
                         return false;
                     }
                 """)
-                await asyncio.sleep(3)  # Wait for the following list to load
+                await asyncio.sleep(2)  # Wait for the modal to open
             except Exception as e:
                 logger.warning(f"Failed to click following tab: {e}")
 
-            # Extract users from DOM
+            # Wait for the following list API to be called
+            # The API endpoint is: /aweme/v1/web/user/following/list/
+            logger.info("Waiting for following list API...")
+            data = await self.interceptor.wait_for("user/following/list", timeout=10)
+
+            if not data:
+                logger.error("No data from following list API")
+                return []
+
             effective_max = max_count or 9999
 
-            def extract_users_from_dom():
-                """Extract user data from the DOM."""
+            # Parse the API response
+            def parse_api_response(response_data: dict) -> list[dict]:
+                """Parse user data from API response."""
                 users = []
                 try:
-                    # Find user cards in the following list
-                    user_cards = page.evaluate("""
-                        () => {
-                            const users = [];
-                            // Look for user links with sec_user_id in the href
-                            const links = document.querySelectorAll('a[href*="/user/"]');
-                            for (const link of links) {
-                                const href = link.getAttribute('href');
-                                if (href && href.includes('/user/')) {
-                                    // Extract sec_user_id from URL
-                                    const match = href.match(/\/user\/([^/?]+)/);
-                                    if (match) {
-                                        const secUid = match[1];
-                                        // Find user info from the card
-                                        const card = link.closest('[role="tabpanel"]') || link.closest('div');
-                                        if (card) {
-                                            // Try to find nickname
-                                            const nicknameEl = card.querySelector('[class*="nickname"]') ||
-                                                                 card.querySelector('[class*="name"]') ||
-                                                                 link;
-                                            const nickname = nicknameEl ? nicknameEl.textContent.trim() : '';
+                    # The API response structure: {data: {user_infos: [...]}}
+                    if isinstance(response_data, dict):
+                        user_infos = response_data.get("data", {}).get("user_infos", [])
+                        for user_info in user_infos:
+                            if not isinstance(user_info, dict):
+                                continue
 
-                                            // Try to find avatar
-                                            const avatarEl = card.querySelector('img[src*="avatar"]');
-                                            const avatarUrl = avatarEl ? avatarEl.src : '';
+                            sec_uid = user_info.get("sec_user_id", "")
+                            if not sec_uid or sec_uid in seen_user_ids:
+                                continue
 
-                                            // Try to find douyin_id
-                                            const idEl = card.querySelector('[class*="unique"]') ||
-                                                       card.querySelector('[class*="id"]');
-                                            const douyinId = idEl ? idEl.textContent.trim() : '';
+                            seen_user_ids.add(sec_uid)
 
-                                            if (secUid && nickname) {
-                                                users.push({
-                                                    sec_user_id: secUid,
-                                                    nickname: nickname,
-                                                    avatar_url: avatarUrl,
-                                                    douyin_id: douyinId
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
+                            # Extract user information
+                            user_data = {
+                                "sec_user_id": sec_uid,
+                                "nickname": user_info.get("nickname", ""),
+                                "avatar_url": "",
+                                "douyin_id": ""
                             }
-                            return users;
-                        }
-                    """)
 
-                    for user in user_cards:
-                        if user['sec_user_id'] not in seen_user_ids:
-                            seen_user_ids.add(user['sec_user_id'])
-                            users.append(user)
+                            # Get avatar URL
+                            avatar_larger = user_info.get("avatar_larger", {})
+                            if isinstance(avatar_larger, dict):
+                                url_list = avatar_larger.get("url_list", [])
+                                if url_list:
+                                    user_data["avatar_url"] = url_list[0]
+                            else:
+                                avatar_thumb = user_info.get("avatar_thumb", {})
+                                if isinstance(avatar_thumb, dict):
+                                    url_list = avatar_thumb.get("url_list", [])
+                                    if url_list:
+                                        user_data["avatar_url"] = url_list[0]
 
+                            # Get douyin_id
+                            user_data["douyin_id"] = user_info.get("unique_id", "") or user_info.get("short_id", "")
+
+                            users.append(user_data)
                 except Exception as e:
-                    logger.warning(f"Error extracting users from DOM: {e}")
-
+                    logger.warning(f"Error parsing API response: {e}")
                 return users
 
-            # Initial extraction
-            users = extract_users_from_dom()
+            # Parse initial response
+            users = parse_api_response(data)
             if users:
                 all_users.extend(users)
                 page_count += 1
                 logger.info(f"Following Page {page_count}: got {len(users)} users")
 
-            if on_page:
-                on_page(page_count, effective_max)
+                if on_page:
+                    on_page(page_count, effective_max)
 
-            # Pagination loop - scroll and extract more users
-            last_count = 0
-            no_new_data_count = 0
-            max_no_new_data = 3  # Stop after 3 consecutive scrolls with no new data
-
+            # Pagination loop - scroll to trigger more API calls
             while len(all_users) < effective_max:
                 # Random delay
                 delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
@@ -773,40 +763,44 @@ class UserScraper:
                     if not resolved:
                         break
 
-                # Scroll to load more users
+                # Scroll to trigger next page API call
                 await page.evaluate("""
                     () => {
-                        // Find the scrollable container in the following tab
+                        // Find the scrollable container in the following modal
                         const tabpanel = document.querySelector('[role="tabpanel"]');
-                        if (tabpanel) {
+                        if (tabpanel && tabpanel.scrollHeight > tabpanel.clientHeight) {
                             tabpanel.scrollTop = tabpanel.scrollHeight;
                         } else {
-                            // Fallback to main scroll container
-                            const container = document.querySelector('.route-scroll-container');
-                            if (container) {
-                                container.scrollTop = container.scrollHeight;
+                            // Try to scroll in the modal content
+                            const modalContent = document.querySelector('[class*="modal"]') ||
+                                                 document.querySelector('[class*="dialog"]');
+                            if (modalContent) {
+                                modalContent.scrollTop = modalContent.scrollHeight;
                             }
                         }
                     }
                 """)
-                await page.wait_for_timeout(2000)  # Wait for new content to load
 
-                # Extract new users
-                users = extract_users_from_dom()
+                # Wait for next API call
+                logger.info("Waiting for next following list API...")
+                next_data = await self.interceptor.wait_for("user/following/list", timeout=10)
 
-                if len(users) == last_count:
-                    no_new_data_count += 1
-                    if no_new_data_count >= max_no_new_data:
-                        logger.info(f"No new data after {max_no_new_data} scrolls, stopping pagination")
-                        break
-                else:
-                    no_new_data_count = 0
-                    page_count += 1
-                    logger.info(f"Following Page {page_count}: got {len(users)} users (total: {len(all_users)})")
-                    if on_page:
-                        on_page(page_count, effective_max)
+                if not next_data:
+                    logger.info("No more data from API, stopping pagination")
+                    break
 
-                last_count = len(users)
+                # Parse response
+                users = parse_api_response(next_data)
+                if not users:
+                    logger.info("No new users in response, stopping pagination")
+                    break
+
+                all_users.extend(users)
+                page_count += 1
+                logger.info(f"Following Page {page_count}: got {len(users)} users (total: {len(all_users)})")
+
+                if on_page:
+                    on_page(page_count, effective_max)
 
             # Trim to max_count
             if max_count and len(all_users) > max_count:
