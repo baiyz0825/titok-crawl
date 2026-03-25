@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class UserScraper:
     def __init__(self):
-        self.interceptor = ResponseInterceptor()
+        pass  # No shared interceptor - each method creates its own
 
     async def scrape_profile(self, task_id: int, sec_user_id: str, page: Page | None = None) -> User | None:
         """Get user profile from API or SSR data.
@@ -144,8 +144,9 @@ class UserScraper:
             own_page = True
             logger.debug(f"Acquired new page for profile scrape: {sec_user_id[:20]}...")
 
-        self.interceptor.clear()
-        await self.interceptor.setup(page)
+        interceptor = ResponseInterceptor()
+        interceptor.clear()
+        await interceptor.setup(page)
 
         try:
             # 检查是否已经在正确的用户页面
@@ -183,20 +184,20 @@ class UserScraper:
 
             # Wait for profile API response
             # 抖音 API 路径已更新：使用 query/user 替代 user/profile/other
-            data = await self.interceptor.wait_for("query/user", timeout=10)
+            data = await interceptor.wait_for("query/user", timeout=10)
             if not data:
                 # 尝试旧的 API 路径（向后兼容）
                 logger.info("No data from query/user, trying user/profile/other")
-                data = await self.interceptor.wait_for("user/profile/other", timeout=5)
+                data = await interceptor.wait_for("user/profile/other", timeout=5)
             if not data:
                 # 尝试 self 端点（当前用户可能使用）
                 logger.info("No data from user/profile/other, trying user/profile/self")
-                data = await self.interceptor.wait_for("user/profile/self", timeout=5)
+                data = await interceptor.wait_for("user/profile/self", timeout=5)
 
             if not data:
                 logger.warning(f"No profile data received for {sec_user_id}")
                 # 调试：列出所有拦截到的 API
-                all_apis = self.interceptor.get_captured_urls()
+                all_apis = interceptor.get_captured_urls()
                 logger.warning(f"Captured APIs: {all_apis}")
                 return None
 
@@ -212,7 +213,7 @@ class UserScraper:
             return user
 
         finally:
-            await self.interceptor.teardown()
+            await interceptor.teardown()
             # 只有在我们自己创建的页面时才释放
             if own_page:
                 try:
@@ -223,7 +224,7 @@ class UserScraper:
 
     async def scrape_works(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
-        on_page: Callable | None = None,
+        on_page: Callable | None = None, existing_page: Page | None = None,
     ) -> list[Work]:
         """Scrape user's works list with pagination.
 
@@ -233,11 +234,23 @@ class UserScraper:
             max_pages: Maximum number of pages to scrape (deprecated, use max_count)
             max_count: Maximum number of works to scrape
             on_page: Callback function(page_num, total_pages) for progress tracking
+            existing_page: Optional existing page to reuse. If None, creates a new page.
         """
         logger.info(f"Starting scrape_works for {sec_user_id}, max_pages={max_pages}, max_count={max_count}")
-        page = await engine.acquire_page(task_id)
-        self.interceptor.clear()
-        await self.interceptor.setup(page)
+        own_page = False
+
+        if existing_page:
+            page = existing_page
+            own_page = False
+            logger.debug(f"Reusing existing page for works scrape: {sec_user_id[:20]}...")
+        else:
+            page = await engine.acquire_page(task_id)
+            own_page = True
+            logger.debug(f"Acquired new page for works scrape: {sec_user_id[:20]}...")
+
+        interceptor = ResponseInterceptor()
+        interceptor.clear()
+        await interceptor.setup(page)
         logger.info(f"Interceptor setup complete for {sec_user_id}")
 
         all_works = []
@@ -260,9 +273,9 @@ class UserScraper:
 
             # Wait for initial works data
             logger.info(f"Waiting for aweme/post API (timeout=15s)...")
-            data = await self.interceptor.wait_for("aweme/post", timeout=15)
+            data = await interceptor.wait_for("aweme/post", timeout=15)
             if data:
-                logger.info(f"Got initial data, has_more={data.get('has_more', 0)}")
+                logger.info(f"Got initial data, has_more={data.get('has_more', 1)}")
                 works = self._parse_works_response(data, sec_user_id)
                 all_works.extend(works)
                 page_count += 1
@@ -270,7 +283,7 @@ class UserScraper:
             else:
                 logger.warning(f"No data received from aweme/post API!")
                 # Log captured URLs for debugging
-                captured = self.interceptor.get_captured_urls()
+                captured = interceptor.get_captured_urls()
                 logger.warning(f"Captured URLs: {captured[:5]}")  # First 5 URLs
 
             # Pagination loop
@@ -314,7 +327,7 @@ class UserScraper:
                 """)
                 await page.wait_for_timeout(1000)
 
-                data = await self.interceptor.wait_for("aweme/post", timeout=10)
+                data = await interceptor.wait_for("aweme/post", timeout=10)
                 if not data:
                     break
 
@@ -338,22 +351,39 @@ class UserScraper:
             return all_works
 
         finally:
-            await self.interceptor.teardown()
-            # Release the page back to the pool for this task
-            try:
-                await engine.release_page(task_id)
-                logger.debug(f"Released page for task #{task_id}")
-            except Exception as e:
-                logger.warning(f"Failed to release page for task #{task_id}: {e}")
+            await interceptor.teardown()
+            # Only release page if we created it
+            if own_page:
+                try:
+                    await engine.release_page(task_id)
+                    logger.debug(f"Released page for task #{task_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_likes(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None, check_cancelled: Callable | None = None,
+        existing_page: Page | None = None,
     ) -> list[Work]:
-        """Scrape current user's liked videos (喜欢) with pagination."""
-        page = await engine.acquire_page(task_id)
-        self.interceptor.clear()
-        await self.interceptor.setup(page)
+        """Scrape current user's liked videos (喜欢) with pagination.
+
+        Args:
+            existing_page: Optional existing page to reuse. If None, creates a new page.
+        """
+        own_page = False
+
+        if existing_page:
+            page = existing_page
+            own_page = False
+            logger.debug(f"Reusing existing page for likes scrape")
+        else:
+            page = await engine.acquire_page(task_id)
+            own_page = True
+            logger.debug(f"Acquired new page for likes scrape")
+
+        interceptor = ResponseInterceptor()
+        interceptor.clear()
+        await interceptor.setup(page)
 
         all_works = []
         page_count = 0
@@ -370,11 +400,11 @@ class UserScraper:
             logger.info("Page loaded, waiting for aweme/favorite API (timeout=15s)...")
 
             # Wait for initial likes data (aweme/favorite API)
-            data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
+            data = await interceptor.wait_for("aweme/favorite", timeout=15)
 
             if not data:
                 logger.warning("No aweme/favorite API received, checking captured APIs...")
-                all_apis = self.interceptor.get_captured_urls()
+                all_apis = interceptor.get_captured_urls()
                 logger.warning(f"Captured APIs: {all_apis}")
 
             if data:
@@ -463,7 +493,7 @@ class UserScraper:
                 """)
                 await page.wait_for_timeout(3000)  # Longer wait for API to respond
 
-                data = await self.interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
+                data = await interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
                 if not data:
                     logger.warning("No more data received from API, stopping pagination")
                     break
@@ -503,22 +533,39 @@ class UserScraper:
             return all_works
 
         finally:
-            await self.interceptor.teardown()
-            # Release the page back to the pool for this task
-            try:
-                await engine.release_page(task_id)
-                logger.debug(f"Released page for task #{task_id}")
-            except Exception as e:
-                logger.warning(f"Failed to release page for task #{task_id}: {e}")
+            await interceptor.teardown()
+            # Only release page if we created it
+            if own_page:
+                try:
+                    await engine.release_page(task_id)
+                    logger.debug(f"Released page for task #{task_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_favorites(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None, check_cancelled: Callable | None = None,
+        existing_page: Page | None = None,
     ) -> list[Work]:
-        """Scrape current user's favorite videos (收藏) with pagination."""
-        page = await engine.acquire_page(task_id)
-        self.interceptor.clear()
-        await self.interceptor.setup(page)
+        """Scrape current user's favorite videos (收藏) with pagination.
+
+        Args:
+            existing_page: Optional existing page to reuse. If None, creates a new page.
+        """
+        own_page = False
+
+        if existing_page:
+            page = existing_page
+            own_page = False
+            logger.debug(f"Reusing existing page for favorites scrape")
+        else:
+            page = await engine.acquire_page(task_id)
+            own_page = True
+            logger.debug(f"Acquired new page for favorites scrape")
+
+        interceptor = ResponseInterceptor()
+        interceptor.clear()
+        await interceptor.setup(page)
 
         all_works = []
         page_count = 0
@@ -535,11 +582,11 @@ class UserScraper:
             logger.info("Page loaded, waiting for aweme/favorite API (timeout=15s)...")
 
             # Wait for initial favorites data
-            data = await self.interceptor.wait_for("aweme/favorite", timeout=15)
+            data = await interceptor.wait_for("aweme/favorite", timeout=15)
 
             if not data:
                 logger.warning("No aweme/favorite API received, checking captured APIs...")
-                all_apis = self.interceptor.get_captured_urls()
+                all_apis = interceptor.get_captured_urls()
                 logger.warning(f"Captured APIs: {all_apis}")
 
             if data:
@@ -627,7 +674,7 @@ class UserScraper:
                 """)
                 await page.wait_for_timeout(3000)  # Longer wait for API to respond
 
-                data = await self.interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
+                data = await interceptor.wait_for("aweme/favorite", timeout=30)  # Increased timeout for slower loading
                 if not data:
                     logger.warning("No more data received from API, stopping pagination")
                     break
@@ -667,13 +714,14 @@ class UserScraper:
             return all_works
 
         finally:
-            await self.interceptor.teardown()
-            # Release the page back to the pool for this task
-            try:
-                await engine.release_page(task_id)
-                logger.debug(f"Released page for task #{task_id}")
-            except Exception as e:
-                logger.warning(f"Failed to release page for task #{task_id}: {e}")
+            await interceptor.teardown()
+            # Only release page if we created it
+            if own_page:
+                try:
+                    await engine.release_page(task_id)
+                    logger.debug(f"Released page for task #{task_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to release page for task #{task_id}: {e}")
 
     async def scrape_following(
         self, task_id: int, sec_user_id: str, max_count: int | None = None,
@@ -705,8 +753,9 @@ class UserScraper:
             own_page = True
             logger.debug(f"Acquired new page for following scrape: {sec_user_id[:20]}...")
 
-        self.interceptor.clear()
-        await self.interceptor.setup(page)
+        interceptor = ResponseInterceptor()
+        interceptor.clear()
+        await interceptor.setup(page)
 
         # 备用：使用 response 事件监听器捕获 API 响应
         # 存储 response 对象而非立即解析（因为 response.json() 是异步的）
@@ -781,7 +830,7 @@ class UserScraper:
             # This ensures we don't miss the API call that happens immediately after clicking
             logger.info("Waiting for following list API...")
             api_wait_task = asyncio.create_task(
-                self.interceptor.wait_for("user/following/list", timeout=15)
+                interceptor.wait_for("user/following/list", timeout=15)
             )
 
             # Small buffer to let interceptor start
@@ -989,7 +1038,7 @@ class UserScraper:
 
                 # Wait for next API call (增加超时时间)
                 logger.info("Waiting for next following list API...")
-                next_data = await self.interceptor.wait_for("user/following/list", timeout=15)
+                next_data = await interceptor.wait_for("user/following/list", timeout=15)
 
                 if not next_data:
                     logger.info("No more data from API, stopping pagination")
@@ -1016,7 +1065,7 @@ class UserScraper:
             return all_users
 
         finally:
-            await self.interceptor.teardown()
+            await interceptor.teardown()
             # 清理事件监听器
             try:
                 page.remove_listener("response", on_response)

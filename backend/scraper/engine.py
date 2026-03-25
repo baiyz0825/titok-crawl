@@ -26,6 +26,9 @@ CHROME_UA = (
 class ScraperEngine:
     """Manages a single Playwright Chromium browser instance."""
 
+    # Maximum number of concurrent pages to prevent resource exhaustion
+    MAX_PAGES = 6
+
     def __init__(self):
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
@@ -35,6 +38,7 @@ class ScraperEngine:
         self._page_pool: dict[int, Page] = {}  # task_id -> Page
         self._page_locks: dict[int, asyncio.Lock] = {}  # task_id -> Lock
         self._pool_lock = asyncio.Lock()  # Protects access to _page_pool and _page_locks
+        self._page_semaphore: asyncio.Semaphore | None = None  # Limit concurrent pages
 
     @property
     def captcha_active(self) -> bool:
@@ -119,11 +123,16 @@ class ScraperEngine:
         Each task gets its own page that is reused for the entire task duration.
         Different tasks use different pages to avoid conflicts.
 
+        Maximum of MAX_PAGES (6) pages can be active at any time.
+
         Args:
             task_id: Unique identifier for the task (from scheduler)
 
         Returns:
             Page: A browser page dedicated to this task
+
+        Raises:
+            RuntimeError: If page limit is exceeded
         """
         if self._context is None:
             raise RuntimeError("Engine not started")
@@ -134,6 +143,19 @@ class ScraperEngine:
                 logger.debug(f"Task #{task_id} reusing existing page")
                 return self._page_pool[task_id]
 
+            # Check if we've reached the page limit
+            if len(self._page_pool) >= self.MAX_PAGES:
+                active_tasks = list(self._page_pool.keys())
+                logger.error(
+                    f"Page limit exceeded: {len(self._page_pool)}/{self.MAX_PAGES}. "
+                    f"Active tasks: {active_tasks}"
+                )
+                raise RuntimeError(
+                    f"Maximum page limit ({self.MAX_PAGES}) reached. "
+                    f"Active tasks: {active_tasks}. "
+                    f"Please wait for existing tasks to complete."
+                )
+
             # Create new page for this task
             page = await self._context.new_page()
             page.set_default_timeout(settings.PAGE_TIMEOUT)
@@ -142,7 +164,7 @@ class ScraperEngine:
             self._page_pool[task_id] = page
             self._page_locks[task_id] = asyncio.Lock()
 
-            logger.info(f"Task #{task_id} assigned new page (total pages: {len(self._page_pool)})")
+            logger.info(f"Task #{task_id} assigned new page (total pages: {len(self._page_pool)}/{self.MAX_PAGES})")
             return page
 
     async def release_page(self, task_id: int):

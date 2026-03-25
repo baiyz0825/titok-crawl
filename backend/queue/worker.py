@@ -256,88 +256,103 @@ class TaskWorker:
         }
 
     async def _scrape_all(self, task_id: int, sec_user_id: str, params: dict) -> dict:
-        progress_manager.update(task_id, 0.05, "采集用户资料", sec_user_id)
-        user = await self.user_scraper.scrape_profile(task_id, sec_user_id)
+        """Scrape user profile and works with page reuse to minimize resource usage."""
+        from backend.scraper.engine import engine
 
-        progress_manager.update(task_id, 0.2, "采集作品列表", sec_user_id)
-        max_count = params.get("max_count")
-        scrape_comments = params.get("scrape_comments", False)
-        refresh_info = params.get("refresh_info", False)
-        works = await self.user_scraper.scrape_works(
-            task_id, sec_user_id, max_count=max_count,
-            on_page=lambda page_num, total: progress_manager.update(
-                task_id,
-                min(0.2 + 0.4 * page_num / max(total, 1), 0.6),
-                f"采集作品第 {page_num} 页",
-                ""
-            )
-        )
+        # Acquire a single page for the entire task
+        page = await engine.acquire_page(task_id)
+        logger.info(f"[Task {task_id}] Acquired page for _scrape_all")
 
-        # Upsert all works to DB
-        for work in works:
-            await crud.upsert_work(work)
+        try:
+            # 1. Scrape profile with page reuse
+            progress_manager.update(task_id, 0.05, "采集用户资料", sec_user_id)
+            user = await self.user_scraper.scrape_profile(task_id, sec_user_id, page=page)
 
-        # Update user's aweme_count - try to get uid from first work if available
-        user_uid = works[0].uid if works and works[0].uid else None
-        await crud.update_user_aweme_count(sec_user_id=sec_user_id, uid=user_uid)
-        logger.info(f"[Task {task_id}] Updated user aweme_count to {len(works)}")
-
-        # Refresh work info if requested
-        refreshed_count = 0
-        if refresh_info and works:
-            progress_manager.update(task_id, 0.61, "刷新作品信息", f"准备刷新 {len(works)} 个作品")
-            for i, work in enumerate(works):
-                try:
-                    # Pass both uid and sec_user_id for work refresh
-                    result = await self._refresh_work_info(task_id, work.aweme_id, {
-                        "sec_user_id": work.sec_user_id,
-                        "uid": work.uid
-                    })
-                    if result and not result.get("error"):
-                        refreshed_count += 1
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to refresh info for {work.aweme_id}: {e}")
-
-        # Download media if requested
-        download_count = 0
-        if params.get("download_media", False) and works:
-            for i, work in enumerate(works):
-                progress_manager.update(
+            # 2. Scrape works with the same page
+            progress_manager.update(task_id, 0.2, "采集作品列表", sec_user_id)
+            max_count = params.get("max_count")
+            scrape_comments = params.get("scrape_comments", False)
+            refresh_info = params.get("refresh_info", False)
+            works = await self.user_scraper.scrape_works(
+                task_id, sec_user_id, max_count=max_count,
+                on_page=lambda page_num, total: progress_manager.update(
                     task_id,
-                    0.6 + 0.35 * (i + 1) / len(works),
-                    f"下载媒体 {i+1}/{len(works)}",
-                    work.aweme_id
-                )
-                # Prefer uid over sec_user_id for media download
-                author_identifier = work.uid if work.uid else work.sec_user_id
-                await self.media_downloader.download_work_media(
-                    work.aweme_id, author_identifier, work.extra_data
-                )
-                download_count += 1
+                    min(0.2 + 0.4 * page_num / max(total, 1), 0.6),
+                    f"采集作品第 {page_num} 页",
+                    ""
+                ),
+                existing_page=page
+            )
 
-        # Scrape comments if requested
-        comments_count = 0
-        if scrape_comments and works:
-            progress_manager.update(task_id, 0.96, "采集评论", f"准备采集 {len(works)} 个作品的评论")
-            for i, work in enumerate(works):
-                try:
-                    comments = await self.comment_scraper.scrape_comments(
-                        work.aweme_id, max_pages=3, on_page=None
+            # Upsert all works to DB
+            for work in works:
+                await crud.upsert_work(work)
+
+            # Update user's aweme_count - try to get uid from first work if available
+            user_uid = works[0].uid if works and works[0].uid else None
+            await crud.update_user_aweme_count(sec_user_id=sec_user_id, uid=user_uid)
+            logger.info(f"[Task {task_id}] Updated user aweme_count to {len(works)}")
+
+            # Refresh work info if requested
+            refreshed_count = 0
+            if refresh_info and works:
+                progress_manager.update(task_id, 0.61, "刷新作品信息", f"准备刷新 {len(works)} 个作品")
+                for i, work in enumerate(works):
+                    try:
+                        # Pass both uid and sec_user_id for work refresh
+                        result = await self._refresh_work_info(task_id, work.aweme_id, {
+                            "sec_user_id": work.sec_user_id,
+                            "uid": work.uid
+                        })
+                        if result and not result.get("error"):
+                            refreshed_count += 1
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to refresh info for {work.aweme_id}: {e}")
+
+            # Download media if requested
+            download_count = 0
+            if params.get("download_media", False) and works:
+                for i, work in enumerate(works):
+                    progress_manager.update(
+                        task_id,
+                        0.6 + 0.35 * (i + 1) / len(works),
+                        f"下载媒体 {i+1}/{len(works)}",
+                        work.aweme_id
                     )
-                    for comment in comments:
-                        await crud.upsert_comment(comment)
-                    comments_count += len(comments)
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+                    # Prefer uid over sec_user_id for media download
+                    author_identifier = work.uid if work.uid else work.sec_user_id
+                    await self.media_downloader.download_work_media(
+                        work.aweme_id, author_identifier, work.extra_data
+                    )
+                    download_count += 1
 
-        progress_manager.update(task_id, 1.0, "完成", "")
-        return {
-            "nickname": user.nickname if user else None,
-            "works_count": len(works),
-            "media_downloaded": download_count,
-            "comments_count": comments_count,
-            "refreshed_count": refreshed_count,
-        }
+            # Scrape comments if requested
+            comments_count = 0
+            if scrape_comments and works:
+                progress_manager.update(task_id, 0.96, "采集评论", f"准备采集 {len(works)} 个作品的评论")
+                for i, work in enumerate(works):
+                    try:
+                        comments = await self.comment_scraper.scrape_comments(
+                            work.aweme_id, max_pages=3, on_page=None
+                        )
+                        for comment in comments:
+                            await crud.upsert_comment(comment)
+                        comments_count += len(comments)
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
+            progress_manager.update(task_id, 1.0, "完成", "")
+            return {
+                "nickname": user.nickname if user else None,
+                "works_count": len(works),
+                "media_downloaded": download_count,
+                "comments_count": comments_count,
+                "refreshed_count": refreshed_count,
+            }
+        finally:
+            # Release the page when task is complete
+            await engine.release_page(task_id)
+            logger.info(f"[Task {task_id}] Released page for _scrape_all")
 
     async def _search(self, task_id: int, keyword: str, params: dict) -> dict:
         search_type = params.get("search_type", "user")
@@ -465,428 +480,458 @@ class TaskWorker:
             return {"aweme_id": aweme_id, "transcript": None}
 
     async def _scrape_likes(self, task_id: int, sec_user_id: str, params: dict) -> dict:
-        """Scrape current user's liked videos with upsert (update if exists)."""
-        max_pages = params.get("max_pages")
-        max_count = params.get("max_count")
-        collect_creators = params.get("collect_creators", False)
-        download_media = params.get("download_media", False)
-        scrape_comments = params.get("scrape_comments", False)
-        speech_recognition = params.get("speech_recognition", False)
-        progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
+        """Scrape current user's liked videos with upsert (update if exists).
+        Uses page reuse to minimize resource consumption.
+        """
+        from backend.scraper.engine import engine
 
-        works = await self.user_scraper.scrape_likes(
-            task_id, sec_user_id, max_pages=max_pages, max_count=max_count,
-            on_page=lambda page_num, total: progress_manager.update(
-                task_id,
-                min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
-                f"采集第 {page_num} 页",
-                f"已获取喜欢的视频数据"
-            ),
-            check_cancelled=lambda: self._check_cancelled(task_id)
-        )
+        # Acquire a single page for the entire task
+        page = await engine.acquire_page(task_id)
+        logger.info(f"[Task {task_id}] Acquired page for _scrape_likes")
 
-        # Upsert all works (update if exists, insert if new)
-        new_count = 0
-        updated_count = 0
-        processed_works = []
-        for work in works:
-            existing = await crud.get_work(work.aweme_id)
-            if existing:
-                updated_count += 1
-            else:
-                new_count += 1
-            await crud.upsert_work(work)
-            processed_works.append(work)
-            # Limit max count if specified
-            if max_count and len(processed_works) >= max_count:
-                break
+        try:
+            max_pages = params.get("max_pages")
+            max_count = params.get("max_count")
+            collect_creators = params.get("collect_creators", False)
+            download_media = params.get("download_media", False)
+            scrape_comments = params.get("scrape_comments", False)
+            speech_recognition = params.get("speech_recognition", False)
+            progress_manager.update(task_id, 0.05, "开始采集喜欢的视频", "")
 
-        # Download media if requested
-        download_count = 0
-        if download_media and processed_works:
-            logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} liked works")
-            progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
-            for i, work in enumerate(processed_works):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
-                    break
+            works = await self.user_scraper.scrape_likes(
+                task_id, sec_user_id, max_pages=max_pages, max_count=max_count,
+                on_page=lambda page_num, total: progress_manager.update(
+                    task_id,
+                    min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
+                    f"采集第 {page_num} 页",
+                    f"已获取喜欢的视频数据"
+                ),
+                check_cancelled=lambda: self._check_cancelled(task_id),
+                existing_page=page
+            )
 
-                try:
-                    progress_manager.update(
-                        task_id,
-                        0.75 + 0.1 * (i + 1) / len(processed_works),
-                        f"下载媒体 {i+1}/{len(processed_works)}",
-                        work.aweme_id
-                    )
-                    # Prefer uid over sec_user_id for media download
-                    author_identifier = work.uid if work.uid else work.sec_user_id
-                    await self.media_downloader.download_work_media(
-                        work.aweme_id, author_identifier, work.extra_data
-                    )
-                    download_count += 1
-                    if (i + 1) % 10 == 0:
-                        logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} liked works")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
-
-        # Scrape comments if requested
-        comments_count = 0
-        if scrape_comments and processed_works:
-            logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} liked works")
-            progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
-            for i, work in enumerate(processed_works):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
-                    break
-
-                try:
-                    comments = await self.comment_scraper.scrape_comments(
-                        work.aweme_id, max_pages=3, on_page=None
-                    )
-                    # Save comments
-                    for comment in comments:
-                        await crud.upsert_comment(comment)
-                    comments_count += len(comments)
-                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
-
-        # Collect creators if requested
-        creators_collected = 0
-        creators_skipped = 0
-        if collect_creators and processed_works:
-            # Collect unique author sec_user_ids
-            author_ids = list(set(w.sec_user_id for w in processed_works))
-            logger.info(f"[Task {task_id}] Found {len(author_ids)} unique creators from {len(processed_works)} works")
-
-            # Filter out authors that already exist in database (recently updated)
-            # Skip collection if user was updated within the last 7 days
-            from datetime import datetime, timedelta
-            recent_cutoff = datetime.now() - timedelta(days=7)
-
-            authors_to_collect = []
-            for author_id in author_ids:
-                existing_user = await crud.get_user(author_id)
-                if existing_user and existing_user.updated_at:
-                    if existing_user.updated_at > recent_cutoff:
-                        logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
-                        creators_skipped += 1
-                    else:
-                        logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
-                        authors_to_collect.append(author_id)
+            # Upsert all works (update if exists, insert if new)
+            new_count = 0
+            updated_count = 0
+            processed_works = []
+            for work in works:
+                existing = await crud.get_work(work.aweme_id)
+                if existing:
+                    updated_count += 1
                 else:
-                    authors_to_collect.append(author_id)
+                    new_count += 1
+                await crud.upsert_work(work)
+                processed_works.append(work)
+                # Limit max count if specified
+                if max_count and len(processed_works) >= max_count:
+                    break
 
-            logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
-
-            if not authors_to_collect:
-                logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
-                creators_collected = 0
-            else:
-                progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
-
-                for i, author_id in enumerate(authors_to_collect):
+            # Download media if requested
+            download_count = 0
+            if download_media and processed_works:
+                logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} liked works")
+                progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
+                for i, work in enumerate(processed_works):
                     # Check if task is cancelled
                     if await self._check_cancelled(task_id):
-                        logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
                         break
 
                     try:
                         progress_manager.update(
                             task_id,
-                            0.91 + 0.04 * (i + 1) / len(authors_to_collect),
-                            f"采集作者 {i+1}/{len(authors_to_collect)}",
-                            author_id
-                        )
-                        logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
-                        user = await self.user_scraper.scrape_profile(task_id, author_id)
-                        if user:
-                            await crud.upsert_user(user)
-                            creators_collected += 1
-                            logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
-                        else:
-                            logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
-
-        # Speech recognition if requested
-        transcript_count = 0
-        if speech_recognition and download_count > 0:
-            # Only process works that have downloaded video files
-            logger.info(f"[Task {task_id}] Starting speech recognition for {len(processed_works)} works")
-            progress_manager.update(task_id, 0.96, "语音转写", f"准备对视频进行语音识别")
-
-            for i, work in enumerate(processed_works):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
-                    break
-
-                try:
-                    # Find downloaded video file for this work
-                    media_files = await crud.get_media_files(work.aweme_id)
-                    video_path = None
-                    for mf in media_files:
-                        if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
-                            from pathlib import Path
-                            if Path(mf.local_path).exists():
-                                video_path = mf.local_path
-                                break
-
-                    if video_path:
-                        progress_manager.update(
-                            task_id,
-                            0.96 + 0.03 * (i + 1) / len(processed_works),
-                            f"语音识别 {i+1}/{len(processed_works)}",
+                            0.75 + 0.1 * (i + 1) / len(processed_works),
+                            f"下载媒体 {i+1}/{len(processed_works)}",
                             work.aweme_id
                         )
-                        text = await self.speech_recognizer.recognize(video_path)
-                        if text:
-                            await crud.update_work_transcript(work.aweme_id, text)
-                            transcript_count += 1
-                            logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
+                        # Prefer uid over sec_user_id for media download
+                        author_identifier = work.uid if work.uid else work.sec_user_id
+                        await self.media_downloader.download_work_media(
+                            work.aweme_id, author_identifier, work.extra_data
+                        )
+                        download_count += 1
+                        if (i + 1) % 10 == 0:
+                            logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} liked works")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
 
-        extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
-        if download_count > 0:
-            extra_info += f"，下载 {download_count} 个媒体"
-        if comments_count > 0:
-            extra_info += f"，{comments_count} 条评论"
-        if transcript_count > 0:
-            extra_info += f"，转写 {transcript_count} 个语音"
-        if creators_collected > 0:
-            extra_info += f"，采集作者 {creators_collected} 个"
+            # Scrape comments if requested
+            comments_count = 0
+            if scrape_comments and processed_works:
+                logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} liked works")
+                progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
+                for i, work in enumerate(processed_works):
+                    # Check if task is cancelled
+                    if await self._check_cancelled(task_id):
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
+                        break
 
-        progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
-        return {
-            "total": len(processed_works),
-            "new": new_count,
-            "updated": updated_count,
-            "media_downloaded": download_count,
-            "comments_count": comments_count,
-            "transcript_count": transcript_count,
-            "creators_collected": creators_collected,
-            "types": {
-                "video": sum(1 for w in processed_works if w.type == "video"),
-                "note": sum(1 for w in processed_works if w.type == "note"),
-            },
-        }
+                    try:
+                        comments = await self.comment_scraper.scrape_comments(
+                            work.aweme_id, max_pages=3, on_page=None
+                        )
+                        # Save comments
+                        for comment in comments:
+                            await crud.upsert_comment(comment)
+                        comments_count += len(comments)
+                        logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
+            # Collect creators if requested (reuse the same page)
+            creators_collected = 0
+            creators_skipped = 0
+            if collect_creators and processed_works:
+                # Collect unique author sec_user_ids
+                author_ids = list(set(w.sec_user_id for w in processed_works))
+                logger.info(f"[Task {task_id}] Found {len(author_ids)} unique creators from {len(processed_works)} works")
+
+                # Filter out authors that already exist in database (recently updated)
+                # Skip collection if user was updated within the last 7 days
+                from datetime import datetime, timedelta
+                recent_cutoff = datetime.now() - timedelta(days=7)
+
+                authors_to_collect = []
+                for author_id in author_ids:
+                    existing_user = await crud.get_user(author_id)
+                    if existing_user and existing_user.updated_at:
+                        if existing_user.updated_at > recent_cutoff:
+                            logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                            creators_skipped += 1
+                        else:
+                            logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                            authors_to_collect.append(author_id)
+                    else:
+                        authors_to_collect.append(author_id)
+
+                logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
+
+                if not authors_to_collect:
+                    logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
+                    creators_collected = 0
+                else:
+                    progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
+
+                    for i, author_id in enumerate(authors_to_collect):
+                        # Check if task is cancelled
+                        if await self._check_cancelled(task_id):
+                            logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                            break
+
+                        try:
+                            progress_manager.update(
+                                task_id,
+                                0.91 + 0.04 * (i + 1) / len(authors_to_collect),
+                                f"采集作者 {i+1}/{len(authors_to_collect)}",
+                                author_id
+                            )
+                            logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
+                            # Reuse the same page for profile scraping
+                            user = await self.user_scraper.scrape_profile(task_id, author_id, page=page)
+                            if user:
+                                await crud.upsert_user(user)
+                                creators_collected += 1
+                                logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                            else:
+                                logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
+                        except Exception as e:
+                            logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+
+            # Speech recognition if requested
+            transcript_count = 0
+            if speech_recognition and download_count > 0:
+                # Only process works that have downloaded video files
+                logger.info(f"[Task {task_id}] Starting speech recognition for {len(processed_works)} works")
+                progress_manager.update(task_id, 0.96, "语音转写", f"准备对视频进行语音识别")
+
+                for i, work in enumerate(processed_works):
+                    # Check if task is cancelled
+                    if await self._check_cancelled(task_id):
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
+                        break
+
+                    try:
+                        # Find downloaded video file for this work
+                        media_files = await crud.get_media_files(work.aweme_id)
+                        video_path = None
+                        for mf in media_files:
+                            if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
+                                from pathlib import Path
+                                if Path(mf.local_path).exists():
+                                    video_path = mf.local_path
+                                    break
+
+                        if video_path:
+                            progress_manager.update(
+                                task_id,
+                                0.96 + 0.03 * (i + 1) / len(processed_works),
+                                f"语音识别 {i+1}/{len(processed_works)}",
+                                work.aweme_id
+                            )
+                            text = await self.speech_recognizer.recognize(video_path)
+                            if text:
+                                await crud.update_work_transcript(work.aweme_id, text)
+                                transcript_count += 1
+                                logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
+
+            extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
+            if download_count > 0:
+                extra_info += f"，下载 {download_count} 个媒体"
+            if comments_count > 0:
+                extra_info += f"，{comments_count} 条评论"
+            if transcript_count > 0:
+                extra_info += f"，转写 {transcript_count} 个语音"
+            if creators_collected > 0:
+                extra_info += f"，采集作者 {creators_collected} 个"
+
+            progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
+            return {
+                "total": len(processed_works),
+                "new": new_count,
+                "updated": updated_count,
+                "media_downloaded": download_count,
+                "comments_count": comments_count,
+                "transcript_count": transcript_count,
+                "creators_collected": creators_collected,
+                "types": {
+                    "video": sum(1 for w in processed_works if w.type == "video"),
+                    "note": sum(1 for w in processed_works if w.type == "note"),
+                },
+            }
+        finally:
+            # Release the page when task is complete
+            await engine.release_page(task_id)
+            logger.info(f"[Task {task_id}] Released page for _scrape_likes")
 
     async def _scrape_favorites(self, task_id: int, sec_user_id: str, params: dict) -> dict:
-        """Scrape current user's favorite videos with upsert (update if exists)."""
-        max_pages = params.get("max_pages")
-        max_count = params.get("max_count")
-        collect_creators = params.get("collect_creators", False)
-        download_media = params.get("download_media", False)
-        scrape_comments = params.get("scrape_comments", False)
-        speech_recognition = params.get("speech_recognition", False)
-        progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
+        """Scrape current user's favorite videos with upsert (update if exists).
+        Uses page reuse to minimize resource consumption.
+        """
+        from backend.scraper.engine import engine
 
-        works = await self.user_scraper.scrape_favorites(
-            task_id, sec_user_id, max_pages=max_pages, max_count=max_count,
-            on_page=lambda page_num, total: progress_manager.update(
-                task_id,
-                min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
-                f"采集第 {page_num} 页",
-                f"已获取收藏的视频数据"
-            ),
-            check_cancelled=lambda: self._check_cancelled(task_id)
-        )
+        # Acquire a single page for the entire task
+        page = await engine.acquire_page(task_id)
+        logger.info(f"[Task {task_id}] Acquired page for _scrape_favorites")
 
-        # Upsert all works (update if exists, insert if new)
-        new_count = 0
-        updated_count = 0
-        processed_works = []
-        for work in works:
-            existing = await crud.get_work(work.aweme_id)
-            if existing:
-                updated_count += 1
-            else:
-                new_count += 1
-            await crud.upsert_work(work)
-            # Automatically add to favorites
-            await crud.add_favorite(work.aweme_id, work.sec_user_id)
-            processed_works.append(work)
-            # Limit max count if specified
-            if max_count and len(processed_works) >= max_count:
-                break
+        try:
+            max_pages = params.get("max_pages")
+            max_count = params.get("max_count")
+            collect_creators = params.get("collect_creators", False)
+            download_media = params.get("download_media", False)
+            scrape_comments = params.get("scrape_comments", False)
+            speech_recognition = params.get("speech_recognition", False)
+            progress_manager.update(task_id, 0.05, "开始采集收藏的视频", "")
 
-        # Download media if requested
-        download_count = 0
-        if download_media and processed_works:
-            logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} favorite works")
-            progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
-            for i, work in enumerate(processed_works):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
-                    break
+            works = await self.user_scraper.scrape_favorites(
+                task_id, sec_user_id, max_pages=max_pages, max_count=max_count,
+                on_page=lambda page_num, total: progress_manager.update(
+                    task_id,
+                    min(0.1 + 0.6 * page_num / max(total, 1), 0.7),
+                    f"采集第 {page_num} 页",
+                    f"已获取收藏的视频数据"
+                ),
+                check_cancelled=lambda: self._check_cancelled(task_id),
+                existing_page=page
+            )
 
-                try:
-                    progress_manager.update(
-                        task_id,
-                        0.75 + 0.1 * (i + 1) / len(processed_works),
-                        f"下载媒体 {i+1}/{len(processed_works)}",
-                        work.aweme_id
-                    )
-                    # Prefer uid over sec_user_id for media download
-                    author_identifier = work.uid if work.uid else work.sec_user_id
-                    await self.media_downloader.download_work_media(
-                        work.aweme_id, author_identifier, work.extra_data
-                    )
-                    download_count += 1
-                    if (i + 1) % 10 == 0:
-                        logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} favorite works")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
-
-        # Scrape comments if requested
-        comments_count = 0
-        if scrape_comments and processed_works:
-            logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} favorite works")
-            progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
-            for i, work in enumerate(processed_works):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
-                    break
-
-                try:
-                    comments = await self.comment_scraper.scrape_comments(
-                        work.aweme_id, max_pages=3, on_page=None
-                    )
-                    # Save comments
-                    for comment in comments:
-                        await crud.upsert_comment(comment)
-                    comments_count += len(comments)
-                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
-
-        # Collect creators if requested
-        creators_collected = 0
-        creators_skipped = 0
-        if collect_creators and processed_works:
-            # Collect unique author sec_user_ids
-            author_ids = list(set(w.sec_user_id for w in processed_works))
-            logger.info(f"[Task {task_id}] Found {len(author_ids)} unique creators from {len(processed_works)} works")
-
-            # Filter out authors that already exist in database (recently updated)
-            # Skip collection if user was updated within the last 7 days
-            from datetime import datetime, timedelta
-            recent_cutoff = datetime.now() - timedelta(days=7)
-
-            authors_to_collect = []
-            for author_id in author_ids:
-                existing_user = await crud.get_user(author_id)
-                if existing_user and existing_user.updated_at:
-                    if existing_user.updated_at > recent_cutoff:
-                        logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
-                        creators_skipped += 1
-                    else:
-                        logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
-                        authors_to_collect.append(author_id)
+            # Upsert all works (update if exists, insert if new)
+            new_count = 0
+            updated_count = 0
+            processed_works = []
+            for work in works:
+                existing = await crud.get_work(work.aweme_id)
+                if existing:
+                    updated_count += 1
                 else:
-                    authors_to_collect.append(author_id)
+                    new_count += 1
+                await crud.upsert_work(work)
+                # Automatically add to favorites
+                await crud.add_favorite(work.aweme_id, work.sec_user_id)
+                processed_works.append(work)
+                # Limit max count if specified
+                if max_count and len(processed_works) >= max_count:
+                    break
 
-            logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
-
-            if not authors_to_collect:
-                logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
-                creators_collected = 0
-            else:
-                progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
-
-                for i, author_id in enumerate(authors_to_collect):
+            # Download media if requested
+            download_count = 0
+            if download_media and processed_works:
+                logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} favorite works")
+                progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
+                for i, work in enumerate(processed_works):
                     # Check if task is cancelled
                     if await self._check_cancelled(task_id):
-                        logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
                         break
 
                     try:
                         progress_manager.update(
                             task_id,
-                            0.91 + 0.04 * (i + 1) / len(authors_to_collect),
-                            f"采集作者 {i+1}/{len(authors_to_collect)}",
-                            author_id
-                        )
-                        logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
-                        user = await self.user_scraper.scrape_profile(task_id, author_id)
-                        if user:
-                            await crud.upsert_user(user)
-                            creators_collected += 1
-                            logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
-                        else:
-                            logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
-
-        # Speech recognition if requested
-        transcript_count = 0
-        if speech_recognition and download_count > 0:
-            # Only process works that have downloaded video files
-            logger.info(f"[Task {task_id}] Starting speech recognition for {len(processed_works)} works")
-            progress_manager.update(task_id, 0.96, "语音转写", f"准备对视频进行语音识别")
-
-            for i, work in enumerate(processed_works):
-                # Check if task is cancelled
-                if await self._check_cancelled(task_id):
-                    logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
-                    break
-
-                try:
-                    # Find downloaded video file for this work
-                    media_files = await crud.get_media_files(work.aweme_id)
-                    video_path = None
-                    for mf in media_files:
-                        if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
-                            from pathlib import Path
-                            if Path(mf.local_path).exists():
-                                video_path = mf.local_path
-                                break
-
-                    if video_path:
-                        progress_manager.update(
-                            task_id,
-                            0.96 + 0.03 * (i + 1) / len(processed_works),
-                            f"语音识别 {i+1}/{len(processed_works)}",
+                            0.75 + 0.1 * (i + 1) / len(processed_works),
+                            f"下载媒体 {i+1}/{len(processed_works)}",
                             work.aweme_id
                         )
-                        text = await self.speech_recognizer.recognize(video_path)
-                        if text:
-                            await crud.update_work_transcript(work.aweme_id, text)
-                            transcript_count += 1
-                            logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
+                        # Prefer uid over sec_user_id for media download
+                        author_identifier = work.uid if work.uid else work.sec_user_id
+                        await self.media_downloader.download_work_media(
+                            work.aweme_id, author_identifier, work.extra_data
+                        )
+                        download_count += 1
+                        if (i + 1) % 10 == 0:
+                            logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} favorite works")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
 
-        extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
-        if download_count > 0:
-            extra_info += f"，下载 {download_count} 个媒体"
-        if comments_count > 0:
-            extra_info += f"，{comments_count} 条评论"
-        if transcript_count > 0:
-            extra_info += f"，转写 {transcript_count} 个语音"
-        if creators_collected > 0:
-            extra_info += f"，采集作者 {creators_collected} 个"
+            # Scrape comments if requested
+            comments_count = 0
+            if scrape_comments and processed_works:
+                logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} favorite works")
+                progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
+                for i, work in enumerate(processed_works):
+                    # Check if task is cancelled
+                    if await self._check_cancelled(task_id):
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
+                        break
 
-        progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
-        return {
-            "total": len(processed_works),
-            "new": new_count,
-            "updated": updated_count,
-            "media_downloaded": download_count,
-            "comments_count": comments_count,
-            "transcript_count": transcript_count,
-            "creators_collected": creators_collected,
-            "types": {
-                "video": sum(1 for w in processed_works if w.type == "video"),
-                "note": sum(1 for w in processed_works if w.type == "note"),
-            },
-        }
+                    try:
+                        comments = await self.comment_scraper.scrape_comments(
+                            work.aweme_id, max_pages=3, on_page=None
+                        )
+                        # Save comments
+                        for comment in comments:
+                            await crud.upsert_comment(comment)
+                        comments_count += len(comments)
+                        logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+
+            # Collect creators if requested (reuse the same page)
+            creators_collected = 0
+            creators_skipped = 0
+            if collect_creators and processed_works:
+                # Collect unique author sec_user_ids
+                author_ids = list(set(w.sec_user_id for w in processed_works))
+                logger.info(f"[Task {task_id}] Found {len(author_ids)} unique creators from {len(processed_works)} works")
+
+                # Filter out authors that already exist in database (recently updated)
+                # Skip collection if user was updated within the last 7 days
+                from datetime import datetime, timedelta
+                recent_cutoff = datetime.now() - timedelta(days=7)
+
+                authors_to_collect = []
+                for author_id in author_ids:
+                    existing_user = await crud.get_user(author_id)
+                    if existing_user and existing_user.updated_at:
+                        if existing_user.updated_at > recent_cutoff:
+                            logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                            creators_skipped += 1
+                        else:
+                            logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                            authors_to_collect.append(author_id)
+                    else:
+                        authors_to_collect.append(author_id)
+
+                logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
+
+                if not authors_to_collect:
+                    logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
+                    creators_collected = 0
+                else:
+                    progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
+
+                    for i, author_id in enumerate(authors_to_collect):
+                        # Check if task is cancelled
+                        if await self._check_cancelled(task_id):
+                            logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
+                            break
+
+                        try:
+                            progress_manager.update(
+                                task_id,
+                                0.91 + 0.04 * (i + 1) / len(authors_to_collect),
+                                f"采集作者 {i+1}/{len(authors_to_collect)}",
+                                author_id
+                            )
+                            logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
+                            # Reuse the same page for profile scraping
+                            user = await self.user_scraper.scrape_profile(task_id, author_id, page=page)
+                            if user:
+                                await crud.upsert_user(user)
+                                creators_collected += 1
+                                logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                            else:
+                                logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
+                        except Exception as e:
+                            logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+
+            # Speech recognition if requested
+            transcript_count = 0
+            if speech_recognition and download_count > 0:
+                # Only process works that have downloaded video files
+                logger.info(f"[Task {task_id}] Starting speech recognition for {len(processed_works)} works")
+                progress_manager.update(task_id, 0.96, "语音转写", f"准备对视频进行语音识别")
+
+                for i, work in enumerate(processed_works):
+                    # Check if task is cancelled
+                    if await self._check_cancelled(task_id):
+                        logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
+                        break
+
+                    try:
+                        # Find downloaded video file for this work
+                        media_files = await crud.get_media_files(work.aweme_id)
+                        video_path = None
+                        for mf in media_files:
+                            if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
+                                from pathlib import Path
+                                if Path(mf.local_path).exists():
+                                    video_path = mf.local_path
+                                    break
+
+                        if video_path:
+                            progress_manager.update(
+                                task_id,
+                                0.96 + 0.03 * (i + 1) / len(processed_works),
+                                f"语音识别 {i+1}/{len(processed_works)}",
+                                work.aweme_id
+                            )
+                            text = await self.speech_recognizer.recognize(video_path)
+                            if text:
+                                await crud.update_work_transcript(work.aweme_id, text)
+                                transcript_count += 1
+                                logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
+                    except Exception as e:
+                        logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
+
+            extra_info = f"新增 {new_count} 个，更新 {updated_count} 个"
+            if download_count > 0:
+                extra_info += f"，下载 {download_count} 个媒体"
+            if comments_count > 0:
+                extra_info += f"，{comments_count} 条评论"
+            if transcript_count > 0:
+                extra_info += f"，转写 {transcript_count} 个语音"
+            if creators_collected > 0:
+                extra_info += f"，采集作者 {creators_collected} 个"
+
+            progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
+            return {
+                "total": len(processed_works),
+                "new": new_count,
+                "updated": updated_count,
+                "media_downloaded": download_count,
+                "comments_count": comments_count,
+                "transcript_count": transcript_count,
+                "creators_collected": creators_collected,
+                "types": {
+                    "video": sum(1 for w in processed_works if w.type == "video"),
+                    "note": sum(1 for w in processed_works if w.type == "note"),
+                },
+            }
+        finally:
+            # Release the page when task is complete
+            await engine.release_page(task_id)
+            logger.info(f"[Task {task_id}] Released page for _scrape_favorites")
 
     async def _scrape_following(self, task_id: int, sec_user_id: str, params: dict) -> dict:
         """Scrape user's following list with optional recursive collection."""
