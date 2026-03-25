@@ -7,7 +7,7 @@ _CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sec_user_id TEXT UNIQUE NOT NULL,
-    uid TEXT,
+    uid TEXT UNIQUE,
     nickname TEXT,
     avatar_url TEXT,
     signature TEXT,
@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS works (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     aweme_id TEXT UNIQUE NOT NULL,
-    sec_user_id TEXT NOT NULL,
+    uid TEXT NOT NULL,  -- Author's real unique identifier (more stable than sec_user_id)
+    sec_user_id TEXT NOT NULL,  -- Current sec_user_id (may change over time)
     type TEXT NOT NULL CHECK(type IN ('video', 'note')),
     title TEXT,
     cover_url TEXT,
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS works (
     extra_data TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sec_user_id) REFERENCES users(sec_user_id)
+    FOREIGN KEY (sec_user_id) REFERENCES users(sec_user_id),
+    FOREIGN KEY (uid) REFERENCES users(uid)
 );
 
 CREATE TABLE IF NOT EXISTS media_files (
@@ -57,6 +59,7 @@ CREATE TABLE IF NOT EXISTS media_files (
         CHECK(download_status IN ('pending', 'downloading', 'completed', 'failed')),
     retry_count INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(aweme_id, media_type),
     FOREIGN KEY (aweme_id) REFERENCES works(aweme_id)
 );
 
@@ -95,8 +98,9 @@ CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     comment_id TEXT UNIQUE NOT NULL,
     aweme_id TEXT NOT NULL,
+    user_uid TEXT NOT NULL,  -- Comment author's real unique identifier
+    user_sec_uid TEXT,  -- Current sec_user_id (may change over time)
     user_nickname TEXT,
-    user_sec_uid TEXT,
     user_avatar TEXT,
     content TEXT,
     digg_count INTEGER DEFAULT 0,
@@ -106,15 +110,18 @@ CREATE TABLE IF NOT EXISTS comments (
     ip_label TEXT,
     extra_data TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (aweme_id) REFERENCES works(aweme_id)
+    FOREIGN KEY (aweme_id) REFERENCES works(aweme_id),
+    FOREIGN KEY (user_uid) REFERENCES users(uid)
 );
 
 CREATE TABLE IF NOT EXISTS favorites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     aweme_id TEXT UNIQUE NOT NULL,
-    sec_user_id TEXT,
+    uid TEXT NOT NULL,  -- User's real unique identifier who favorited this work
+    sec_user_id TEXT,  -- Current sec_user_id (may change over time)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (aweme_id) REFERENCES works(aweme_id) ON DELETE CASCADE
+    FOREIGN KEY (aweme_id) REFERENCES works(aweme_id) ON DELETE CASCADE,
+    FOREIGN KEY (uid) REFERENCES users(uid)
 );
 """
 
@@ -162,6 +169,37 @@ class Database:
                 )
             """)
             await self._conn.commit()
+
+        # Add unique constraint to media_files (aweme_id, media_type) if not exists
+        # SQLite doesn't support ADD CONSTRAINT, so we need to recreate the table
+        cursor = await self._conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='media_files'")
+        row = await cursor.fetchone()
+        if row and "UNIQUE" not in row[0]:
+            # Backup and recreate media_files with unique constraint
+            await self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS media_files_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    aweme_id TEXT NOT NULL,
+                    media_type TEXT NOT NULL CHECK(media_type IN ('video', 'image', 'cover')),
+                    url TEXT NOT NULL,
+                    local_path TEXT,
+                    file_size INTEGER,
+                    download_status TEXT DEFAULT 'pending'
+                        CHECK(download_status IN ('pending', 'downloading', 'completed', 'failed')),
+                    retry_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(aweme_id, media_type)
+                )
+            """)
+            # Copy existing data
+            await self._conn.execute("""
+                INSERT INTO media_files_new SELECT * FROM media_files
+            """)
+            # Drop old table and rename
+            await self._conn.execute("DROP TABLE media_files")
+            await self._conn.execute("ALTER TABLE media_files_new RENAME TO media_files")
+            await self._conn.commit()
+            logger.info("Migrated media_files table with unique constraint")
 
     async def close(self):
         if self._conn:

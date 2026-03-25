@@ -52,7 +52,22 @@ async def scrape_user(req: ScrapeUserRequest):
 
 @router.delete("/batch")
 async def delete_users_batch(req: BatchDeleteRequest):
-    await crud.delete_users_batch(req.sec_user_ids, cascade=req.cascade)
+    """Delete multiple users. Supports both uid and sec_user_id."""
+    # Prefer uid-based deletion (more reliable)
+    uids = []
+    sec_user_ids = []
+    for user_id in req.sec_user_ids:
+        # Try uid first
+        user = await crud.get_user_by_uid(user_id)
+        if user:
+            uids.append(user.uid)
+        else:
+            # Assume it's already a sec_user_id
+            sec_user_ids.append(user_id)
+
+    await crud.delete_users_batch(sec_user_ids=sec_user_ids if sec_user_ids else None,
+                                   uids=uids if uids else None,
+                                   cascade=req.cascade)
     return {"deleted": len(req.sec_user_ids)}
 
 
@@ -80,29 +95,58 @@ async def list_users(
 
 
 @router.get("/delete-preview")
-async def get_delete_preview(sec_user_ids: list[str] = Query(...), cascade: bool = False):
-    """Get preview of what will be deleted for confirmation."""
-    preview = await crud.get_delete_preview(sec_user_ids, cascade)
+async def get_delete_preview(user_ids: list[str] = Query(..., alias="sec_user_ids"), cascade: bool = False):
+    """Get preview of what will be deleted for confirmation. Supports both uid and sec_user_id."""
+    # Prefer uid-based preview (more reliable)
+    uids = []
+    sec_user_ids = []
+    for user_id in user_ids:
+        # Try uid first
+        user = await crud.get_user_by_uid(user_id)
+        if user:
+            uids.append(user.uid)
+        else:
+            # Assume it's already a sec_user_id
+            sec_user_ids.append(user_id)
+
+    preview = await crud.get_delete_preview(sec_user_ids=sec_user_ids if sec_user_ids else None,
+                                             cascade=cascade,
+                                             uids=uids if uids else None)
     return preview
 
 
-@router.delete("/{sec_user_id}")
-async def delete_user(sec_user_id: str, cascade: bool = False):
-    await crud.delete_user(sec_user_id, cascade=cascade)
-    return {"deleted": True}
-
-
-@router.get("/{sec_user_id}")
-async def get_user(sec_user_id: str):
-    """Get user detail with scrape status."""
-    user = await crud.get_user(sec_user_id)
+@router.delete("/{user_id}")
+async def delete_user(user_id: str, cascade: bool = False):
+    """Delete a user. Supports both uid and sec_user_id."""
+    # Try to find by uid first, then by sec_user_id
+    user = await crud.get_user_by_uid(user_id)
+    if user is None:
+        user = await crud.get_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Get scrape status
-    works_count = await crud.count_works(sec_user_id=sec_user_id)
-    comments_count = await crud.count_user_comments(sec_user_id)
-    media_count = await crud.count_user_media(sec_user_id)
+    # Prefer uid-based deletion (more reliable)
+    if user.uid:
+        await crud.delete_user(uid=user.uid, cascade=cascade)
+    else:
+        await crud.delete_user(sec_user_id=user.sec_user_id, cascade=cascade)
+    return {"deleted": True}
+
+
+@router.get("/{user_id}")
+async def get_user(user_id: str):
+    """Get user detail with scrape status. Supports both uid and sec_user_id."""
+    # Try to find by uid first, then by sec_user_id
+    user = await crud.get_user_by_uid(user_id)
+    if user is None:
+        user = await crud.get_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Get scrape status - prefer uid-based queries (more reliable)
+    works_count = await crud.count_works(sec_user_id=user.sec_user_id, uid=user.uid)
+    comments_count = await crud.count_user_comments(sec_user_id=user.sec_user_id, uid=user.uid)
+    media_count = await crud.count_user_media(sec_user_id=user.sec_user_id, uid=user.uid)
 
     return {
         **user.model_dump(),
@@ -116,11 +160,19 @@ async def get_user(sec_user_id: str):
     }
 
 
-@router.post("/{sec_user_id}/rescrape")
-async def rescrape_user(sec_user_id: str, req: RescrapeRequest | None = None):
+@router.post("/{user_id}/rescrape")
+async def rescrape_user(user_id: str, req: RescrapeRequest | None = None):
+    """Rescrape user data. Supports both uid and sec_user_id."""
+    # Try to find by uid first, then by sec_user_id
+    user = await crud.get_user_by_uid(user_id)
+    if user is None:
+        user = await crud.get_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
     sync_type = req.sync_type if req else "all"
     type_map = {"all": "user_all", "profile": "user_profile", "works": "user_works", "comments": "comments"}
     task_type = type_map.get(sync_type, "user_all")
-    target = sec_user_id
+    target = user.sec_user_id  # Task system still uses sec_user_id
     task_id = await scheduler.submit(task_type=task_type, target=target)
     return {"task_id": task_id}

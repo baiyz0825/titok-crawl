@@ -28,9 +28,42 @@ class TaskWorker:
         task = await crud.get_task(task_id)
         return task and task.status == "cancelled"
 
+    async def _resolve_sec_user_id(self, target: str) -> str | None:
+        """Resolve target (uid or sec_user_id) to sec_user_id for Douyin API.
+
+        Douyin API requires sec_user_id, but frontend may pass uid.
+        This function looks up sec_user_id from database if uid is passed.
+        """
+        # If target looks like sec_user_id (starts with MS4wLjAB), use directly
+        if target.startswith("MS4wLjAB"):
+            return target
+
+        # Try as uid (numeric format like 670059810022624)
+        if target.isdigit():
+            user = await crud.get_user_by_uid(target)
+            if user:
+                logger.info(f"Resolved uid {target} to sec_user_id {user.sec_user_id}")
+                return user.sec_user_id
+
+        # Fallback: try as sec_user_id directly
+        user = await crud.get_user(target)
+        if user:
+            return user.sec_user_id
+
+        # Not found in database, assume it's already a sec_user_id
+        logger.warning(f"Target {target} not found in database, using as-is")
+        return target
+
     async def execute(self, task_id: int, task_type: str, target: str, params: str | None) -> dict:
         """Execute a task and return result summary."""
         parsed_params = json.loads(params) if params else {}
+
+        # Resolve target to sec_user_id for user-related tasks
+        if task_type in ["user_profile", "user_works", "user_all", "user_likes", "user_favorites", "user_following"]:
+            sec_user_id = await self._resolve_sec_user_id(target)
+            if not sec_user_id:
+                return {"error": f"Cannot resolve target {target} to sec_user_id"}
+            target = sec_user_id
 
         if task_type == "user_profile":
             return await self._scrape_profile(task_id, target)
@@ -70,7 +103,8 @@ class TaskWorker:
         scrape_comments = params.get("scrape_comments", False)
         refresh_info = params.get("refresh_info", False)
         download_media = params.get("download_media", False)
-        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}, refresh_info={refresh_info}, download_media={download_media}")
+        speech_recognition = params.get("speech_recognition", False)
+        logger.info(f"[Task {task_id}] Starting scrape_works for {sec_user_id}, max_count={max_count}, scrape_comments={scrape_comments}, refresh_info={refresh_info}, download_media={download_media}, speech_recognition={speech_recognition}")
         progress_manager.update(task_id, 0.05, "开始采集作品", f"用户 {sec_user_id}")
 
         # Wrap scrape_works to track page progress
@@ -93,6 +127,11 @@ class TaskWorker:
 
         progress_manager.update(task_id, 0.95, "保存数据", f"共 {len(works)} 个作品")
 
+        # Update user's aweme_count - try to get uid from first work if available
+        user_uid = works[0].uid if works and works[0].uid else None
+        await crud.update_user_aweme_count(sec_user_id=sec_user_id, uid=user_uid)
+        logger.info(f"[Task {task_id}] Updated user aweme_count to {len(works)}")
+
         # Refresh work info if requested (re-visit each work page for updated stats)
         refreshed_count = 0
         if refresh_info and works:
@@ -100,7 +139,11 @@ class TaskWorker:
             progress_manager.update(task_id, 0.96, "刷新作品信息", f"准备刷新 {len(works)} 个作品的统计信息")
             for i, work in enumerate(works):
                 try:
-                    result = await self._refresh_work_info(task_id, work.aweme_id, {"sec_user_id": sec_user_id})
+                    # Pass both uid and sec_user_id for work refresh
+                    result = await self._refresh_work_info(task_id, work.aweme_id, {
+                        "sec_user_id": work.sec_user_id,
+                        "uid": work.uid
+                    })
                     if result and not result.get("error"):
                         refreshed_count += 1
                         if (i + 1) % 10 == 0:
@@ -139,14 +182,54 @@ class TaskWorker:
                         f"下载媒体 {i+1}/{len(works)}",
                         work.aweme_id
                     )
+                    # Prefer uid over sec_user_id for media download
+                    author_identifier = work.uid if work.uid else work.sec_user_id
                     await self.media_downloader.download_work_media(
-                        work.aweme_id, sec_user_id, work.extra_data
+                        work.aweme_id, author_identifier, work.extra_data
                     )
                     download_count += 1
                     if (i + 1) % 10 == 0:
                         logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(works)} works")
                 except Exception as e:
                     logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+
+        # Speech recognition if requested
+        transcript_count = 0
+        if speech_recognition and download_count > 0:
+            logger.info(f"[Task {task_id}] Starting speech recognition for {len(works)} works")
+            progress_manager.update(task_id, 0.98, "语音转写", f"准备对视频进行语音识别")
+
+            for i, work in enumerate(works):
+                # Check if task is cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled, stopping speech recognition")
+                    break
+
+                try:
+                    # Find downloaded video file for this work
+                    media_files = await crud.get_media_files(work.aweme_id)
+                    video_path = None
+                    for mf in media_files:
+                        if mf.media_type == "video" and mf.download_status == "completed" and mf.local_path:
+                            from pathlib import Path
+                            if Path(mf.local_path).exists():
+                                video_path = mf.local_path
+                                break
+
+                    if video_path:
+                        progress_manager.update(
+                            task_id,
+                            0.98 + 0.01 * (i + 1) / len(works),
+                            f"语音识别 {i+1}/{len(works)}",
+                            work.aweme_id
+                        )
+                        text = await self.speech_recognizer.recognize(video_path)
+                        if text:
+                            await crud.update_work_transcript(work.aweme_id, text)
+                            transcript_count += 1
+                            logger.info(f"[Task {task_id}] Transcribed {len(text)} chars for {work.aweme_id}")
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to transcribe {work.aweme_id}: {e}")
 
         extra_info = []
         if refreshed_count > 0:
@@ -155,14 +238,17 @@ class TaskWorker:
             extra_info.append(f"{comments_count} 条评论")
         if download_count > 0:
             extra_info.append(f"下载 {download_count} 个媒体")
+        if transcript_count > 0:
+            extra_info.append(f"转写 {transcript_count} 个语音")
 
-        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品" + (extra_info.join(", ") if extra_info else ""))
-        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {refreshed_count} refreshed, {comments_count} comments scraped, {download_count} media downloaded")
+        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(works)} 个作品" + (", ".join(extra_info) if extra_info else ""))
+        logger.info(f"[Task {task_id}] Completed: {len(works)} works upserted, {refreshed_count} refreshed, {comments_count} comments scraped, {download_count} media downloaded, {transcript_count} transcribed")
         return {
             "count": len(works),
             "refreshed_count": refreshed_count,
             "comments_count": comments_count,
             "media_downloaded": download_count,
+            "transcript_count": transcript_count,
             "types": {
                 "video": sum(1 for w in works if w.type == "video"),
                 "note": sum(1 for w in works if w.type == "note"),
@@ -191,13 +277,22 @@ class TaskWorker:
         for work in works:
             await crud.upsert_work(work)
 
+        # Update user's aweme_count - try to get uid from first work if available
+        user_uid = works[0].uid if works and works[0].uid else None
+        await crud.update_user_aweme_count(sec_user_id=sec_user_id, uid=user_uid)
+        logger.info(f"[Task {task_id}] Updated user aweme_count to {len(works)}")
+
         # Refresh work info if requested
         refreshed_count = 0
         if refresh_info and works:
             progress_manager.update(task_id, 0.61, "刷新作品信息", f"准备刷新 {len(works)} 个作品")
             for i, work in enumerate(works):
                 try:
-                    result = await self._refresh_work_info(task_id, work.aweme_id, {"sec_user_id": sec_user_id})
+                    # Pass both uid and sec_user_id for work refresh
+                    result = await self._refresh_work_info(task_id, work.aweme_id, {
+                        "sec_user_id": work.sec_user_id,
+                        "uid": work.uid
+                    })
                     if result and not result.get("error"):
                         refreshed_count += 1
                 except Exception as e:
@@ -213,8 +308,10 @@ class TaskWorker:
                     f"下载媒体 {i+1}/{len(works)}",
                     work.aweme_id
                 )
+                # Prefer uid over sec_user_id for media download
+                author_identifier = work.uid if work.uid else work.sec_user_id
                 await self.media_downloader.download_work_media(
-                    work.aweme_id, sec_user_id, work.extra_data
+                    work.aweme_id, author_identifier, work.extra_data
                 )
                 download_count += 1
 
@@ -273,6 +370,7 @@ class TaskWorker:
     async def _refresh_work_info(self, task_id: int, aweme_id: str, params: dict) -> dict:
         """Re-scrape a single work's info (title, stats) by visiting its page."""
         sec_user_id = params.get("sec_user_id", "")
+        author_uid = params.get("uid", "")  # Prefer uid for work association
         progress_manager.update(task_id, 0.1, "刷新作品信息", aweme_id)
 
         # Navigate to the work page and intercept the detail API
@@ -302,9 +400,14 @@ class TaskWorker:
             if data:
                 aweme_detail = data.get("aweme_detail", data)
                 stats = aweme_detail.get("statistics", {})
+                author_info = aweme_detail.get("author", {})
+                # Prefer uid from params, then from API response, then fallback
+                work_uid = author_uid or author_info.get("uid", "") or ""
+                work_sec_user_id = sec_user_id or author_info.get("sec_uid", "")
                 work = Work(
                     aweme_id=aweme_id,
-                    sec_user_id=sec_user_id or aweme_detail.get("author", {}).get("sec_uid", ""),
+                    uid=work_uid,
+                    sec_user_id=work_sec_user_id,
                     type="video" if aweme_detail.get("aweme_type", 0) in (0, 4) else "note",
                     title=aweme_detail.get("desc", ""),
                     cover_url=aweme_detail.get("video", {}).get("cover", {}).get("url_list", [""])[0]
@@ -328,6 +431,13 @@ class TaskWorker:
     async def _speech_recognize(self, task_id: int, aweme_id: str, params: dict) -> dict:
         """Recognize speech from a downloaded video."""
         progress_manager.update(task_id, 0.1, "查找视频文件", aweme_id)
+
+        # Check if already transcribed (prevent duplicate processing)
+        work = await crud.get_work(aweme_id)
+        if work and work.transcript:
+            logger.info(f"[Task {task_id}] Work {aweme_id} already has transcript, skipping")
+            progress_manager.update(task_id, 1.0, "完成", "已有语音转写")
+            return {"aweme_id": aweme_id, "skipped": True, "reason": "already_transcribed"}
 
         # Find the local video file
         media_files = await crud.get_media_files(aweme_id)
@@ -409,8 +519,10 @@ class TaskWorker:
                         f"下载媒体 {i+1}/{len(processed_works)}",
                         work.aweme_id
                     )
+                    # Prefer uid over sec_user_id for media download
+                    author_identifier = work.uid if work.uid else work.sec_user_id
                     await self.media_downloader.download_work_media(
-                        work.aweme_id, work.sec_user_id, work.extra_data
+                        work.aweme_id, author_identifier, work.extra_data
                     )
                     download_count += 1
                     if (i + 1) % 10 == 0:
@@ -620,8 +732,10 @@ class TaskWorker:
                         f"下载媒体 {i+1}/{len(processed_works)}",
                         work.aweme_id
                     )
+                    # Prefer uid over sec_user_id for media download
+                    author_identifier = work.uid if work.uid else work.sec_user_id
                     await self.media_downloader.download_work_media(
-                        work.aweme_id, work.sec_user_id, work.extra_data
+                        work.aweme_id, author_identifier, work.extra_data
                     )
                     download_count += 1
                     if (i + 1) % 10 == 0:
@@ -776,6 +890,8 @@ class TaskWorker:
 
     async def _scrape_following(self, task_id: int, sec_user_id: str, params: dict) -> dict:
         """Scrape user's following list with optional recursive collection."""
+        from backend.scraper.engine import engine
+
         max_count = params.get("max_count")
         collect_profile = params.get("collect_profile", False)
         recursive = params.get("recursive", False)
@@ -788,59 +904,72 @@ class TaskWorker:
         processed_users = set()
         all_users_data = []
 
-        # Recursive collection function
-        async def collect_following_recursive(target_id: str, current_depth: int):
-            if current_depth > recursive_depth:
-                return
+        # 在整个任务开始时获取页面, 复用于所有操作
+        page = await engine.acquire_page(task_id)
+        logger.debug(f"Acquired page for task {task_id}")
 
-            if target_id in processed_users:
-                return
+        try:
+            # Recursive collection function
+            async def collect_following_recursive(target_id: str, current_depth: int):
+                if current_depth > recursive_depth:
+                    return
 
-            processed_users.add(target_id)
-            progress_manager.update(task_id, 0.1, f"采集关注列表 (深度 {current_depth}/{recursive_depth})", f"已处理 {len(processed_users)} 个用户")
+                if target_id in processed_users:
+                    return
 
-            # Get following list for this user
-            following_users = await self.user_scraper.scrape_following(
-                task_id, target_id, max_count=None,  # No limit per user
-                on_page=None
-            )
+                processed_users.add(target_id)
+                progress_manager.update(task_id, 0.1, f"采集关注列表 (深度 {current_depth}/{recursive_depth})", f"已处理 {len(processed_users)} 个用户")
 
-            logger.info(f"[Task {task_id}] Found {len(following_users)} following for {target_id[:20]}...")
+                # Get following list for this user, 复用已有页面
+                following_users = await self.user_scraper.scrape_following(
+                    task_id, target_id, max_count=None,
+                    on_page=None, existing_page=page
+                )
 
-            for user_info in following_users:
-                following_id = user_info["sec_user_id"]
+                logger.info(f"[Task {task_id}] Found {len(following_users)} following for {target_id[:20]}...")
 
-                # Collect profile if requested
-                if collect_profile and following_id not in processed_users:
-                    try:
-                        progress_manager.update(task_id, 0.1, f"采集用户资料 ({len(all_users_data)})", user_info["nickname"] or following_id[:20])
-                        user = await self.user_scraper.scrape_profile(task_id, following_id)
-                        if user:
-                            await crud.upsert_user(user)
-                            all_users_data.append(user_info)
-                            logger.info(f"[Task {task_id}] Saved profile for {user.nickname} ({following_id[:20]}...)")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to scrape profile for {following_id[:20]}: {e}")
-                        all_users_data.append(user_info)  # Add basic info even if profile scrape fails
-                else:
-                    all_users_data.append(user_info)
+                for user_info in following_users:
+                    following_id = user_info["sec_user_id"]
 
-                # Recursive collection
-                if recursive and current_depth < recursive_depth:
-                    await collect_following_recursive(following_id, current_depth + 1)
+                    # Collect profile if requested
+                    if collect_profile and following_id not in processed_users:
+                        try:
+                            progress_manager.update(task_id, 0.1, f"采集用户资料 ({len(all_users_data)})", user_info["nickname"] or following_id[:20])
+                            # 复用已有页面, 不创建新页面
+                            user = await self.user_scraper.scrape_profile(task_id, following_id, page=page)
+                            if user:
+                                await crud.upsert_user(user)
+                                all_users_data.append(user_info)
+                                logger.info(f"[Task {task_id}] Saved profile for {user.nickname} ({following_id[:20]}...)")
+                        except Exception as e:
+                            logger.warning(f"[Task {task_id}] Failed to scrape profile for {following_id[:20]}: {e}")
+                            all_users_data.append(user_info)  # Add basic info even if profile scrape fails
+                    else:
+                        all_users_data.append(user_info)
 
-        # Start collection
-        await collect_following_recursive(sec_user_id, 1)
+                    # Recursive collection
+                    if recursive and current_depth < recursive_depth:
+                        await collect_following_recursive(following_id, current_depth + 1)
 
-        progress_manager.update(task_id, 0.95, "保存数据", f"共采集 {len(all_users_data)} 个关注用户")
-        progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(all_users_data)} 个用户，深度 {recursive_depth}")
+            # Start collection
+            await collect_following_recursive(sec_user_id, 1)
 
-        logger.info(f"[Task {task_id}] Completed: {len(all_users_data)} users collected, {len(processed_users)} unique users processed")
+            progress_manager.update(task_id, 0.95, "保存数据", f"共采集 {len(all_users_data)} 个关注用户")
+            progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(all_users_data)} 个用户，深度 {recursive_depth}")
 
-        return {
-            "total": len(all_users_data),
-            "unique": len(processed_users),
-            "collect_profile": collect_profile,
-            "recursive": recursive,
-            "depth": recursive_depth,
-        }
+            logger.info(f"[Task {task_id}] Completed: {len(all_users_data)} users collected, {len(processed_users)} unique users processed")
+
+            return {
+                "total": len(all_users_data),
+                "unique": len(processed_users),
+                "collect_profile": collect_profile,
+                "recursive": recursive,
+                "depth": recursive_depth,
+            }
+        finally:
+            # 在整个任务结束时释放页面
+            try:
+                await engine.release_page(task_id)
+                logger.debug(f"Released page for task {task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to release page for task {task_id}: {e}")

@@ -6,31 +6,46 @@
     </div>
 
     <!-- 已登录用户信息卡片 -->
-    <div v-if="currentUser && loggedIn" class="user-card">
-      <div class="user-avatar">
+    <div v-if="loggedIn" class="user-card">
+      <div v-if="currentUser" class="user-avatar">
         <img :src="currentUser.avatar_url || '/default-avatar.png'" :alt="currentUser.nickname" />
       </div>
       <div class="user-info">
-        <h3 class="user-name">{{ currentUser.nickname || '未知用户' }}</h3>
-        <div class="user-meta">
-          <span class="user-id">抖音号：{{ currentUser.douyin_id || secUserIdShort }}</span>
-          <span class="sec-user-id" :title="currentUser.sec_user_id">ID: {{ secUserIdShort }}</span>
-        </div>
-        <div v-if="currentUser.signature" class="user-signature">{{ currentUser.signature }}</div>
-        <div class="user-stats">
-          <div class="stat-item">
-            <span class="stat-label">关注</span>
-            <span class="stat-value">{{ formatNumber(currentUser.following_count) }}</span>
+        <template v-if="currentUser">
+          <h3 class="user-name">{{ currentUser.nickname || '未知用户' }}</h3>
+          <div class="user-meta">
+            <span class="user-id">抖音号：{{ currentUser.douyin_id || secUserIdShort }}</span>
+            <span class="sec-user-id" :title="currentUser.sec_user_id">ID: {{ secUserIdShort }}</span>
           </div>
-          <div class="stat-item">
-            <span class="stat-label">粉丝</span>
-            <span class="stat-value">{{ formatNumber(currentUser.follower_count) }}</span>
+          <div v-if="currentUser.signature" class="user-signature">{{ currentUser.signature }}</div>
+          <div class="user-stats">
+            <div class="stat-item">
+              <span class="stat-label">关注</span>
+              <span class="stat-value">{{ formatNumber(currentUser.following_count) }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">粉丝</span>
+              <span class="stat-value">{{ formatNumber(currentUser.follower_count) }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">获赞</span>
+              <span class="stat-value">{{ formatNumber(currentUser.total_favorited) }}</span>
+            </div>
           </div>
-          <div class="stat-item">
-            <span class="stat-label">获赞</span>
-            <span class="stat-value">{{ formatNumber(currentUser.total_favorited) }}</span>
-          </div>
-        </div>
+        </template>
+        <template v-else>
+          <h3 class="user-name">未采集用户信息</h3>
+          <p class="user-signature">点击下方按钮采集当前登录用户的详细信息</p>
+        </template>
+        <el-button
+          type="primary"
+          size="default"
+          :loading="scrapingCurrentUser"
+          @click="scrapeCurrentUser"
+          style="margin-top: 12px"
+        >
+          {{ currentUser ? '重新采集当前用户' : '采集当前用户' }}
+        </el-button>
       </div>
     </div>
 
@@ -134,6 +149,7 @@ import client from '../api/client'
 const loggedIn = ref(false)
 const loginMessage = ref('')
 const currentUser = ref<any>(null)
+const scrapingCurrentUser = ref(false)
 
 // 计算属性：显示简短的 sec_user_id
 const secUserIdShort = computed(() => {
@@ -183,6 +199,20 @@ async function getCurrentUser() {
     if (error.response?.status === 401) {
       currentUser.value = null
     }
+  }
+}
+
+async function scrapeCurrentUser() {
+  scrapingCurrentUser.value = true
+  try {
+    const res: any = await client.post('/sessions/scrape-current-user')
+    currentUser.value = res.user
+    ElMessage.success(res.message || '采集成功')
+  } catch (error: any) {
+    console.error('[Sessions] Failed to scrape current user:', error)
+    ElMessage.error(error.response?.data?.detail || '采集失败')
+  } finally {
+    scrapingCurrentUser.value = false
   }
 }
 

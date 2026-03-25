@@ -154,31 +154,8 @@ async def login_stream(request: Request):
                         await engine._handle_save_login_dialog(page)
                         await engine.save_cookies("default")
 
-                        # 登录成功后自动采集并保存当前用户信息
-                        try:
-                            from backend.db import crud
-                            from backend.scraper.user_scraper import UserScraper
-
-                            sec_user_id = await engine.get_current_user_id()
-                            if sec_user_id:
-                                # 检查数据库中是否已有该用户
-                                existing_user = await crud.get_user(sec_user_id)
-                                if not existing_user:
-                                    # 数据库中没有，采集用户资料
-                                    logger.info(f"First login for user {sec_user_id}, scraping profile...")
-                                    scraper = UserScraper()
-                                    user_data = await scraper.scrape_profile(sec_user_id)
-                                    if user_data:
-                                        await crud.upsert_user(user_data)
-                                        logger.info(f"✅ Saved current user: {user_data.nickname} ({sec_user_id})")
-                                    else:
-                                        logger.warning(f"Failed to scrape profile for {sec_user_id}")
-                                else:
-                                    logger.info(f"✅ User already in database: {existing_user.nickname} ({sec_user_id})")
-                            else:
-                                logger.warning("Could not get current user ID after login")
-                        except Exception as scrape_error:
-                            logger.error(f"Failed to scrape/save current user after login: {scrape_error}")
+                        # 登录成功，不再自动采集用户信息
+                        # 用户可以通过"采集当前用户"按钮手动采集
 
                         current_phase = "success"
                         if current_phase != last_phase:
@@ -331,28 +308,66 @@ async def input_code(body: CodeInput):
 
 @router.get("/current-user")
 async def get_current_user():
-    """获取当前登录用户信息（从数据库读取）"""
-    # 先检查是否已登录
+    """获取当前登录用户信息（从数据库读取，不触发 playwright）"""
+    # 先检查是否已登录（只检查 cookies，不导航）
     is_logged_in = await engine.check_login()
     if not is_logged_in:
         raise HTTPException(status_code=401, detail="未登录")
 
-    # 获取当前用户的 sec_user_id
+    # 从数据库中获取最近更新的用户作为当前用户
+    # 不使用 playwright 获取，避免不必要的导航
     try:
         from backend.db import crud
 
-        sec_user_id = await engine.get_current_user_id()
-        if sec_user_id:
-            # 从数据库中获取完整信息
-            user = await crud.get_user(sec_user_id)
-            if user:
-                return user.model_dump()
-            else:
-                raise HTTPException(status_code=404, detail="用户信息未找到，请重新登录以采集信息")
+        # 尝试从最近采集的用户中获取
+        users = await crud.get_users(page=1, size=1, sort_by="updated_at", sort_order="DESC")
+        if users and len(users) > 0:
+            return users[0].model_dump()
         else:
-            raise HTTPException(status_code=404, detail="无法获取当前用户信息")
+            raise HTTPException(status_code=404, detail="用户信息未找到，请点击\"采集当前用户\"按钮")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get current user: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/scrape-current-user")
+async def scrape_current_user():
+    """采集当前登录用户信息并保存到数据库"""
+    # 先检查是否已登录
+    is_logged_in = await engine.check_login()
+    if not is_logged_in:
+        raise HTTPException(status_code=401, detail="未登录，请先扫码登录")
+
+    try:
+        from backend.db import crud
+        from backend.scraper.user_scraper import UserScraper
+
+        sec_user_id = await engine.get_current_user_id()
+        if not sec_user_id:
+            raise HTTPException(status_code=404, detail="无法获取当前用户 ID")
+
+        logger.info(f"Scraping current user profile: {sec_user_id}")
+
+        # 使用 UserScraper 采集用户信息（复用任务采集逻辑）
+        scraper = UserScraper()
+        user_data = await scraper.scrape_profile(task_id=0, sec_user_id=sec_user_id)
+
+        if user_data:
+            # 保存到数据库（upsert_user 返回用户 ID）
+            await crud.upsert_user(user_data)
+            logger.info(f"✅ Saved current user: {user_data.nickname} ({sec_user_id})")
+            return {
+                "success": True,
+                "user": user_data.model_dump(),
+                "message": f"已采集用户: {user_data.nickname}"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="采集用户信息失败，请稍后重试")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to scrape current user: {e}")
+        raise HTTPException(status_code=500, detail=f"采集失败: {str(e)}")

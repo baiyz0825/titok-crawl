@@ -25,7 +25,8 @@ class User(BaseModel):
 class Work(BaseModel):
     id: int | None = None
     aweme_id: str
-    sec_user_id: str
+    uid: str  # Author's real unique identifier (more stable than sec_user_id)
+    sec_user_id: str  # Current sec_user_id (may change over time)
     type: str  # 'video' or 'note'
     title: str | None = None
     cover_url: str | None = None
@@ -90,8 +91,9 @@ class Comment(BaseModel):
     id: int | None = None
     comment_id: str
     aweme_id: str
+    user_uid: str  # Comment author's real unique identifier
+    user_sec_uid: str | None = None  # Current sec_user_id (may change over time)
     user_nickname: str | None = None
-    user_sec_uid: str | None = None
     user_avatar: str | None = None
     content: str | None = None
     digg_count: int = 0
@@ -106,7 +108,8 @@ class Comment(BaseModel):
 class Favorite(BaseModel):
     id: int | None = None
     aweme_id: str
-    sec_user_id: str | None = None
+    uid: str  # User's real unique identifier who favorited this work
+    sec_user_id: str | None = None  # Current sec_user_id (may change over time)
     created_at: datetime | None = None
 
 

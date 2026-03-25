@@ -30,6 +30,7 @@ class CreateTaskRequest(BaseModel):
     refresh_info: bool = False
     collect_profile: bool = False
     collect_creators: bool = False
+    speech_recognition: bool = False
     recursive: bool = False
     recursive_depth: int = 1
     priority: int = 0
@@ -135,6 +136,7 @@ async def create_task(req: CreateTaskRequest):
         "refresh_info": req.refresh_info,
         "collect_profile": req.collect_profile,
         "collect_creators": req.collect_creators,
+        "speech_recognition": req.speech_recognition,
         "recursive": req.recursive,
         "recursive_depth": req.recursive_depth,
         "priority": req.priority,

@@ -231,6 +231,7 @@ class CommentScraper:
         return Comment(
             comment_id=cid,
             aweme_id=aweme_id,
+            user_uid=str(user.get("uid", "")) if user.get("uid") else "",
             user_nickname=user.get("nickname", ""),
             user_sec_uid=user.get("sec_uid", ""),
             user_avatar=user.get("avatar_thumb", {}).get("url_list", [""])[0]

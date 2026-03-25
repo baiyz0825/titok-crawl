@@ -475,14 +475,24 @@ async def update_work_transcript(aweme_id: str, transcript: str):
 
 # ── Media Files ──
 
-async def create_media_file(mf: MediaFile) -> int:
+async def upsert_media_file(mf: MediaFile) -> int:
+    """Insert or update media file. Uses (aweme_id, media_type) as unique key."""
     cursor = await db.conn.execute(
-        """INSERT INTO media_files (aweme_id, media_type, url, local_path, file_size, download_status)
-        VALUES (?, ?, ?, ?, ?, ?)""",
-        (mf.aweme_id, mf.media_type, mf.url, mf.local_path, mf.file_size, mf.download_status),
+        """INSERT INTO media_files (aweme_id, media_type, url, local_path, file_size, download_status, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(aweme_id, media_type) DO UPDATE SET
+            url=excluded.url, local_path=excluded.local_path,
+            file_size=excluded.file_size, download_status=excluded.download_status,
+            retry_count=excluded.retry_count""",
+        (mf.aweme_id, mf.media_type, mf.url, mf.local_path, mf.file_size, mf.download_status, mf.retry_count or 0),
     )
     await db.conn.commit()
     return cursor.lastrowid
+
+
+async def create_media_file(mf: MediaFile) -> int:
+    """Deprecated: Use upsert_media_file instead. Kept for backward compatibility."""
+    return await upsert_media_file(mf)
 
 
 async def update_media_file(file_id: int, **kwargs):

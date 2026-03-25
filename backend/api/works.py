@@ -14,6 +14,7 @@ class BatchDeleteWorksRequest(BaseModel):
 @router.get("")
 async def list_works(
     sec_user_id: str | None = None,
+    uid: str | None = None,
     type: str | None = None,
     page: int = 1,
     size: int = 20,
@@ -25,9 +26,14 @@ async def list_works(
     has_media: bool | None = None,
     has_transcript: bool | None = None,
 ):
-    """List works with optional filters and sorting."""
+    """List works with optional filters and sorting.
+
+    Args:
+        sec_user_id: Filter by author's sec_user_id (fallback)
+        uid: Filter by author's uid (preferred, more reliable)
+    """
     filter_kwargs = dict(
-        sec_user_id=sec_user_id, work_type=type,
+        sec_user_id=sec_user_id, uid=uid, work_type=type,
         start_date=start_date, end_date=end_date,
         has_comments=has_comments, has_media=has_media, has_transcript=has_transcript,
     )
@@ -152,7 +158,9 @@ async def rescrape_work(aweme_id: str, req: RescrapeWorkRequest | None = None):
         if sync_type == "media":
             kwargs = {}
             if work:
+                # Prefer uid over sec_user_id
                 kwargs["sec_user_id"] = work.sec_user_id
+                kwargs["uid"] = work.uid
                 kwargs["extra_data"] = work.extra_data
             task_id = await scheduler.submit(
                 task_type="media_download", target=aweme_id, **kwargs,
@@ -161,7 +169,9 @@ async def rescrape_work(aweme_id: str, req: RescrapeWorkRequest | None = None):
         elif sync_type == "work_info":
             kwargs = {}
             if work:
+                # Pass both uid and sec_user_id for work refresh
                 kwargs["sec_user_id"] = work.sec_user_id
+                kwargs["uid"] = work.uid
             task_id = await scheduler.submit(
                 task_type="work_info", target=aweme_id, **kwargs,
             )
