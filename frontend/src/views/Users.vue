@@ -32,7 +32,7 @@
           <el-tag v-if="selectedUsers.length" type="info" round>已选 {{ selectedUsers.length }}</el-tag>
         </div>
         <div class="toolbar-right">
-          <el-button v-if="selectedUsers.length" type="danger" plain @click="openDeleteDialog(selectedUsers.map(u => u.sec_user_id))">删除选中</el-button>
+          <el-button v-if="selectedUsers.length" type="danger" plain @click="openDeleteDialog(selectedUsers.map(u => u.uid || u.sec_user_id))">删除选中</el-button>
           <el-button v-if="selectedUsers.length" type="primary" plain @click="batchCreateTasks">采集选中用户</el-button>
           <el-button @click="fetchUsers" :loading="loading">刷新</el-button>
         </div>
@@ -68,14 +68,22 @@
             <div class="action-btns">
               <el-button size="small" @click="viewDetail(row)">详情</el-button>
               <el-button size="small" type="primary" plain @click="openRescrape(row)">更新资料</el-button>
-              <el-button size="small" type="danger" plain @click="openDeleteDialog([row.sec_user_id])">删除</el-button>
+              <el-button size="small" type="danger" plain @click="openDeleteDialog([row.uid || row.sec_user_id])">删除</el-button>
             </div>
           </template>
         </el-table-column>
       </el-table>
 
       <div class="table-footer">
-        <el-pagination layout="total, prev, pager, next" :total="total" :page-size="pageSize" v-model:current-page="page" @current-change="fetchUsers" />
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          @current-change="fetchUsers"
+          @size-change="handleSizeChange"
+        />
       </div>
     </div>
 
@@ -226,11 +234,10 @@
         <el-button @click="showDeleteDialog = false">取消</el-button>
         <el-button
           v-if="!deletePreview.loading && deletePreview.data"
-          type="danger"
+          :type="deletePreviewConfirmed ? 'danger' : 'default'"
           @click="confirmDelete"
-          :disabled="deletePreviewConfirmed"
         >
-          {{ deletePreviewConfirmed ? '已确认' : '确认删除' }}
+          {{ deletePreviewConfirmed ? '再次确认删除' : '确认删除' }}
         </el-button>
       </template>
     </el-dialog>
@@ -318,7 +325,7 @@ import client from '../api/client'
 const users = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const loading = ref(false)
 const scrapeId = ref('')
 const scraping = ref(false)
@@ -364,7 +371,7 @@ function debouncedSearch() {
 
 async function fetchUsers() {
   loading.value = true
-  const params: any = { page: page.value, size: pageSize }
+  const params: any = { page: page.value, size: pageSize.value }
   if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
   if (sortBy.value) params.sort_by = sortBy.value
   if (sortOrder.value) params.sort_order = sortOrder.value
@@ -372,6 +379,11 @@ async function fetchUsers() {
   users.value = res.items
   total.value = res.total
   loading.value = false
+}
+
+function handleSizeChange() {
+  page.value = 1
+  fetchUsers()
 }
 
 async function scrapeUser() {
@@ -391,7 +403,7 @@ async function scrapeUser() {
 }
 
 async function viewDetail(user: any) {
-  const res: any = await client.get(`/users/${user.sec_user_id}`)
+  const res: any = await client.get(`/users/${user.uid || user.sec_user_id}`)
   detailData.value = res
   drawerVisible.value = true
 }
@@ -401,14 +413,14 @@ async function openRescrape(row: any) {
   rescrapeStatus.value = null
   showRescrapeDialog.value = true
   try {
-    const res: any = await client.get(`/users/${row.sec_user_id}`)
+    const res: any = await client.get(`/users/${row.uid || row.sec_user_id}`)
     rescrapeStatus.value = res.scrape_status
   } catch { rescrapeStatus.value = null }
 }
 
 async function doRescrape() {
   if (!rescrapeTarget.value) return
-  await client.post(`/users/${rescrapeTarget.value.sec_user_id}/rescrape`, {
+  await client.post(`/users/${rescrapeTarget.value.uid || rescrapeTarget.value.sec_user_id}/rescrape`, {
     sync_type: 'profile',
   })
   ElMessage.success('已提交更新资料任务')
@@ -495,7 +507,7 @@ async function submitBatchTasks() {
       try {
         const params: any = {
           task_type: batchTaskForm.value.task_type,
-          target: user.sec_user_id,
+          target: user.uid || user.sec_user_id,
           is_scheduled: batchTaskForm.value.task_category === 'scheduled'
         }
         if (batchTaskForm.value.task_category === 'scheduled') {

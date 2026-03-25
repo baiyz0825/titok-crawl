@@ -22,9 +22,9 @@
           >
             <el-option
               v-for="u in userOptions"
-              :key="u.sec_user_id"
+              :key="u.uid || u.sec_user_id"
               :label="u.nickname || u.douyin_id || u.sec_user_id"
-              :value="u.sec_user_id"
+              :value="u.uid || u.sec_user_id"
             >
               <div class="user-option">
                 <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
@@ -100,6 +100,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="table-footer">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          @current-change="fetchSchedules"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -110,6 +122,9 @@ import { ElMessage } from 'element-plus'
 import client from '../api/client'
 
 const schedules = ref<any[]>([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
 const loading = ref(false)
 const form = reactive({ sec_user_id: '', nickname: '', sync_type: 'all', interval_minutes: 1440 })
 const userOptions = ref<any[]>([])
@@ -148,8 +163,8 @@ async function loadInitialUsers() {
   userSearchLoading.value = false
 }
 
-function onUserSelect(secUserId: string) {
-  const user = userOptions.value.find(u => u.sec_user_id === secUserId)
+function onUserSelect(userId: string) {
+  const user = userOptions.value.find(u => (u.uid || u.sec_user_id) === userId)
   if (user) {
     form.nickname = user.nickname || ''
   }
@@ -157,9 +172,17 @@ function onUserSelect(secUserId: string) {
 
 async function fetchSchedules() {
   loading.value = true
-  const res: any = await client.get('/schedules')
+  const res: any = await client.get('/schedules', {
+    params: { page: page.value, size: pageSize.value }
+  })
   schedules.value = res.items
+  total.value = res.total
   loading.value = false
+}
+
+function handleSizeChange() {
+  page.value = 1
+  fetchSchedules()
 }
 
 async function createSchedule() {
@@ -199,6 +222,8 @@ onMounted(() => {
 .table-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .table-title { font-size: 15px; font-weight: 600; color: #334155; }
 .text-muted { color: #94a3b8; font-size: 13px; }
+
+.table-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
 
 .form-grid {
   display: grid;

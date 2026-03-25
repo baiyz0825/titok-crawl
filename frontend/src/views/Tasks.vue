@@ -212,11 +212,13 @@
 
       <div class="table-footer">
         <el-pagination
-          layout="total, prev, pager, next"
-          :total="total"
-          :page-size="pageSize"
           v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
           @current-change="fetchTasks"
+          @size-change="handleSizeChange"
         />
       </div>
     </div>
@@ -260,26 +262,12 @@
             :loading="userSearchLoading"
             placeholder="搜索或选择用户"
             style="width: 100%"
+            popper-class="user-select-dropdown"
             @visible-change="onSelectVisibleChange"
           >
             <el-option
-              v-if="currentUser"
-              key="current-user"
-              :label="`我 (${currentUser.nickname || currentUser.douyin_id || '当前用户'})`"
-              :value="currentUser.sec_user_id"
-            >
-              <div class="user-option current-user-option">
-                <el-tag type="success" size="small" style="margin-right: 8px">我</el-tag>
-                <el-avatar :src="currentUser.avatar_url" :size="24">{{ (currentUser.nickname||'?')[0] }}</el-avatar>
-                <div class="user-option-info">
-                  <span class="user-option-name">{{ currentUser.nickname || '-' }}</span>
-                  <span class="user-option-id">{{ currentUser.douyin_id || currentUser.sec_user_id?.slice(0, 18) + '...' }}</span>
-                </div>
-              </div>
-            </el-option>
-            <el-option
               v-for="u in userOptions"
-              :key="u.sec_user_id"
+              :key="u.uid || u.sec_user_id"
               :label="u.nickname || u.douyin_id || u.sec_user_id"
               :value="u.sec_user_id"
             >
@@ -445,7 +433,7 @@ import client from '../api/client'
 const tasks = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const loading = ref(false)
 const statusFilter = ref('')
 const typeFilter = ref('')
@@ -485,7 +473,6 @@ const currentTask = ref<any>(null)
 const parsedResult = ref<any>(null)
 const userOptions = ref<any[]>([])
 const userSearchLoading = ref(false)
-const currentUser = ref<any>(null)
 
 function typeLabel(t: string) {
   return ({
@@ -576,7 +563,7 @@ function formatTaskResult(result: any) {
 
 async function fetchTasks() {
   loading.value = true
-  const params: any = { page: page.value, size: pageSize }
+  const params: any = { page: page.value, size: pageSize.value }
   if (statusFilter.value) params.status = statusFilter.value
   if (typeFilter.value) params.task_type = typeFilter.value
   if (dateRange.value && dateRange.value.length === 2) {
@@ -718,20 +705,9 @@ async function searchUsers(query: string = '') {
 }
 
 async function onSelectVisibleChange(visible: boolean) {
-  if (visible) {
-    // 如果列表为空，自动加载用户列表
-    if (userOptions.value.length === 0) {
-      await searchUsers('')
-    }
-    // 如果还没有当前用户信息，自动加载
-    if (!currentUser.value) {
-      try {
-        const res: any = await client.get('/sessions/current-user')
-        currentUser.value = res
-      } catch {
-        // 忽略错误，可能未登录
-      }
-    }
+  if (visible && userOptions.value.length === 0) {
+    // 直接搜索 users 表
+    await searchUsers('')
   }
 }
 
@@ -818,6 +794,11 @@ function formatParams(params: any) {
   } catch {
     return params
   }
+}
+
+function handleSizeChange() {
+  page.value = 1
+  fetchTasks()
 }
 
 function startProgressSSE() {
@@ -997,11 +978,59 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
   color: #94a3b8;
 }
 
-/* 修复下拉选项重叠问题 */
+/* 修复下拉选项样式 */
 :deep(.el-select-dropdown__item) {
   padding: 8px 12px !important;
   height: auto !important;
+  line-height: 1.4 !important;
   min-height: 48px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+:deep(.el-select-dropdown__wrap) {
+  max-height: 300px !important;
+}
+
+:deep(.el-select-dropdown) {
+  min-width: 280px !important;
+}
+
+.user-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.4;
+  padding: 4px 0;
+  width: 100%;
+}
+
+.user-option-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.user-option-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+
+.user-option-id {
+  font-size: 11px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 任务详情对话框样式 */
@@ -1021,4 +1050,50 @@ onUnmounted(() => { clearInterval(refreshTimer); eventSource?.close() })
 .error-section { background: #fef2f2 !important; }
 .error-message { font-size: 13px; color: #dc2626; white-space: pre-wrap; word-break: break-word; }
 .params-json { font-size: 12px; color: #475569; background: white; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0; }
+</style>
+
+<!-- 全局样式：修复下拉框高度问题 -->
+<style>
+.user-select-dropdown {
+  max-height: 400px !important;
+}
+
+.user-select-dropdown .el-select-dropdown__item {
+  height: auto !important;
+  padding: 10px 12px !important;
+  line-height: 1.4 !important;
+}
+
+.user-select-dropdown .user-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+}
+
+.user-select-dropdown .user-option-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.user-select-dropdown .user-option-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-select-dropdown .user-option-id {
+  font-size: 11px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>

@@ -104,11 +104,13 @@
 
       <div class="table-footer">
         <el-pagination
-          layout="total, prev, pager, next"
-          :total="total"
-          :page-size="pageSize"
           v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
           @current-change="fetchWorks"
+          @size-change="handleSizeChange"
         />
       </div>
     </div>
@@ -318,42 +320,31 @@
         </el-form-item>
 
         <el-form-item label="目标用户">
-          <div style="display: flex; gap: 8px;">
-            <el-select
-              v-model="taskForm.target"
-              filterable
-              remote
-              :remote-method="searchUsers"
-              :loading="userSearchLoading"
-              placeholder="搜索或选择用户"
-              style="flex: 1"
-              @visible-change="onSelectVisibleChange"
+          <el-select
+            v-model="taskForm.target"
+            filterable
+            remote
+            :remote-method="searchUsers"
+            :loading="userSearchLoading"
+            placeholder="搜索或选择用户"
+            style="width: 100%"
+            @visible-change="onSelectVisibleChange"
+          >
+            <el-option
+              v-for="u in userOptions"
+              :key="u.uid || u.sec_user_id"
+              :label="u.nickname || u.douyin_id || u.sec_user_id"
+              :value="u.uid || u.sec_user_id"
             >
-              <el-option
-                v-for="u in userOptions"
-                :key="u.sec_user_id"
-                :label="u.nickname || u.douyin_id || u.sec_user_id"
-                :value="u.sec_user_id"
-              >
-                <div class="user-option">
-                  <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
-                  <div class="user-option-info">
-                    <span class="user-option-name">{{ u.nickname || '-' }}</span>
-                    <span class="user-option-id">{{ u.douyin_id || u.sec_user_id?.slice(0, 18) + '...' }}</span>
-                  </div>
+              <div class="user-option">
+                <el-avatar :src="u.avatar_url" :size="24">{{ (u.nickname||'?')[0] }}</el-avatar>
+                <div class="user-option-info">
+                  <span class="user-option-name">{{ u.nickname || '-' }}</span>
+                  <span class="user-option-id">{{ u.douyin_id || u.sec_user_id?.slice(0, 18) + '...' }}</span>
                 </div>
-              </el-option>
-            </el-select>
-            <el-button
-              type="success"
-              plain
-              @click="selectCurrentUser"
-              :loading="currentUserLoading"
-              title="当前登录用户"
-            >
-              我
-            </el-button>
-          </div>
+              </div>
+            </el-option>
+          </el-select>
         </el-form-item>
 
         <el-form-item v-if="['user_works', 'user_all', 'user_likes', 'user_favorites', 'user_following'].includes(taskForm.task_type)" label="最大采集数量">
@@ -413,7 +404,7 @@ import client from '../api/client'
 const works = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const loading = ref(false)
 const filters = reactive({ sec_user_id: '', type: '', dateRange: null as string[] | null, scrapeStatus: '' })
 const sortBy = ref('publish_time')
@@ -443,7 +434,6 @@ const taskForm = ref({
 })
 const userOptions = ref<any[]>([])
 const userSearchLoading = ref(false)
-const currentUserLoading = ref(false)
 
 // Clean up polling when detail dialog closes
 watch(drawerVisible, (visible) => {
@@ -491,7 +481,7 @@ function formatDate(d: string) {
 
 async function fetchWorks() {
   loading.value = true
-  const params: any = { page: page.value, size: pageSize, sort_by: sortBy.value, sort_order: sortOrder.value }
+  const params: any = { page: page.value, size: pageSize.value, sort_by: sortBy.value, sort_order: sortOrder.value }
   if (filters.sec_user_id) params.sec_user_id = filters.sec_user_id
   if (filters.type) params.type = filters.type
   if (filters.dateRange && filters.dateRange.length === 2) {
@@ -514,6 +504,11 @@ async function fetchWorks() {
   works.value = res.items
   total.value = res.total
   loading.value = false
+}
+
+function handleSizeChange() {
+  page.value = 1
+  fetchWorks()
 }
 
 async function openDetail(row: any) {
@@ -621,22 +616,6 @@ async function searchUsers(query: string = '') {
 async function onSelectVisibleChange(visible: boolean) {
   if (visible && userOptions.value.length === 0) {
     await searchUsers('')
-  }
-}
-
-async function selectCurrentUser() {
-  currentUserLoading.value = true
-  try {
-    const res: any = await client.get('/sessions/current-user')
-    taskForm.value.target = res.sec_user_id
-    if (res.nickname || res.douyin_id || res.avatar_url) {
-      userOptions.value = [res]
-    }
-    ElMessage.success('已选择当前登录用户')
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '获取当前用户失败，请确保已登录')
-  } finally {
-    currentUserLoading.value = false
   }
 }
 
