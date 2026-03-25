@@ -4,9 +4,20 @@
     <aside class="user-panel" :class="{ open: panelOpen }">
       <div class="panel-header">
         <h3>选择用户</h3>
-        <button class="panel-close" @click="panelOpen = false">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
+        <div class="panel-header-actions">
+          <button
+            class="auto-play-btn"
+            :class="{ active: autoPlayEnabled }"
+            @click="autoPlayEnabled = !autoPlayEnabled"
+            :title="autoPlayEnabled ? '关闭自动播放' : '开启自动播放'"
+          >
+            <svg v-if="autoPlayEnabled" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </button>
+          <button class="panel-close" @click="panelOpen = false">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
       </div>
       <div class="panel-search">
         <input
@@ -19,9 +30,9 @@
       <div class="user-list">
         <div
           v-for="user in filteredUsers"
-          :key="user.sec_user_id"
+          :key="user.uid || user.sec_user_id"
           class="user-item"
-          :class="{ active: selectedUser?.sec_user_id === user.sec_user_id }"
+          :class="{ active: (selectedUser?.uid || selectedUser?.sec_user_id) === (user.uid || user.sec_user_id) }"
           @click="selectUser(user)"
         >
           <img
@@ -33,7 +44,7 @@
           <div v-else class="user-avatar-placeholder">{{ (user.nickname || '?')[0] }}</div>
           <div class="user-info">
             <div class="user-name">{{ user.nickname || user.sec_user_id }}</div>
-            <div class="user-meta">{{ userStats[user.sec_user_id]?.works_count ?? (user.aweme_count || 0) }} 作品</div>
+            <div class="user-meta">{{ userStats[user.uid || user.sec_user_id]?.works_count ?? (user.aweme_count || 0) }} 作品</div>
           </div>
         </div>
         <div v-if="filteredUsers.length === 0 && !loadingUsers" class="empty-hint">
@@ -68,6 +79,15 @@
       <button class="mobile-back-btn" @click="goBack">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         <span>返回</span>
+      </button>
+      <!-- 自动播放按钮 -->
+      <button
+        class="mobile-auto-play-btn"
+        :class="{ active: autoPlayEnabled }"
+        @click="autoPlayEnabled = !autoPlayEnabled"
+      >
+        <svg v-if="autoPlayEnabled" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
       </button>
       <!-- 浮动头像按钮 -->
       <button class="fab-avatar" @click="panelOpen = true">
@@ -249,19 +269,31 @@ const loadingComments = ref(false)
 // 收藏功能
 const favoriteStatus = ref<Record<string, boolean>>({})
 
+// 自动播放控制
+const autoPlayEnabled = ref(true)
+
 const feedRef = ref<HTMLDivElement | null>(null)
 const sentinelRef = ref<HTMLDivElement | null>(null)
 
 // --- 用户列表 ---
 const filteredUsers = computed(() => {
-  if (!searchQuery.value) return users.value
-  const q = searchQuery.value.toLowerCase()
-  return users.value.filter(
-    (u: any) =>
-      (u.nickname || '').toLowerCase().includes(q) ||
-      (u.sec_user_id || '').toLowerCase().includes(q) ||
-      (u.douyin_id || '').toLowerCase().includes(q)
-  )
+  let result = users.value
+  // 搜索过滤
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(
+      (u: any) =>
+        (u.nickname || '').toLowerCase().includes(q) ||
+        (u.sec_user_id || '').toLowerCase().includes(q) ||
+        (u.douyin_id || '').toLowerCase().includes(q)
+    )
+  }
+  // 按昵称字母排序
+  return [...result].sort((a, b) => {
+    const nameA = (a.nickname || '').toLowerCase()
+    const nameB = (b.nickname || '').toLowerCase()
+    return nameA.localeCompare(nameB, 'zh-CN')
+  })
 })
 
 async function loadUsers() {
@@ -282,10 +314,11 @@ async function selectUser(user: any) {
   selectedUserDetail.value = null
 
   // 获取用户详细统计
+  const userKey = user.uid || user.sec_user_id
   try {
-    const detail: any = await client.get(`/users/${user.sec_user_id}`)
+    const detail: any = await client.get(`/users/${userKey}`)
     selectedUserDetail.value = detail.scrape_status || null
-    userStats.value[user.sec_user_id] = detail.scrape_status || {}
+    userStats.value[userKey] = detail.scrape_status || {}
   } catch { /* ignore */ }
 
   loadWorks()
@@ -296,13 +329,17 @@ async function loadWorks() {
   if (!selectedUser.value || loadingWorks.value || !hasMore.value) return
   loadingWorks.value = true
   try {
-    const res: any = await client.get('/works', {
-      params: {
-        sec_user_id: selectedUser.value.sec_user_id,
-        page: page.value,
-        size: 20,
-      },
-    })
+    const params: any = {
+      page: page.value,
+      size: 20,
+    }
+    // Prefer uid over sec_user_id for API calls
+    if (selectedUser.value.uid) {
+      params.uid = selectedUser.value.uid
+    } else if (selectedUser.value.sec_user_id) {
+      params.sec_user_id = selectedUser.value.sec_user_id
+    }
+    const res: any = await client.get('/works', { params })
     const items = res.items || res || []
     if (items.length === 0) {
       hasMore.value = false
@@ -344,9 +381,11 @@ function observeCards() {
             if (!work._loaded && !work._loading) {
               loadVideoUrl(work)
             }
-            // 自动播放
-            const video = el.querySelector('video')
-            if (video) video.play().catch(() => {})
+            // 自动播放（仅当启用时）
+            if (autoPlayEnabled.value) {
+              const video = el.querySelector('video')
+              if (video) video.play().catch(() => {})
+            }
           } else {
             // 暂停
             const video = el.querySelector('video')
@@ -492,9 +531,26 @@ function goBack() {
 }
 
 // --- 生命周期 ---
-onMounted(() => {
-  loadUsers()
+onMounted(async () => {
+  await loadUsers()
+  // 预加载所有用户的统计信息
+  await loadAllUserStats()
 })
+
+async function loadAllUserStats() {
+  // 为每个用户加载统计信息（使用 Promise.all 并发）
+  const promises = users.value.map(async (user) => {
+    const userKey = user.uid || user.sec_user_id
+    try {
+      const detail: any = await client.get(`/users/${userKey}`)
+      userStats.value[userKey] = detail.scrape_status || {}
+    } catch {
+      // 如果获取失败，使用 aweme_count 作为后备
+      userStats.value[userKey] = { works_count: user.aweme_count || 0 }
+    }
+  })
+  await Promise.all(promises)
+}
 
 onUnmounted(() => {
   cardObserver?.disconnect()
@@ -540,6 +596,33 @@ watch(sentinelRef, (el) => {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+}
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auto-play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.auto-play-btn:hover {
+  background: #252525;
+  color: #888;
+}
+.auto-play-btn.active {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: #10b981;
+  color: #10b981;
 }
 .panel-close {
   display: none;
@@ -728,6 +811,26 @@ watch(sentinelRef, (el) => {
 
 .mobile-back-btn:active {
   transform: scale(0.96);
+}
+
+.mobile-auto-play-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid #333;
+  border-radius: 50%;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mobile-auto-play-btn.active {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: #10b981;
+  color: #10b981;
 }
 
 /* ===== Feed ===== */
@@ -1074,6 +1177,10 @@ watch(sentinelRef, (el) => {
   }
 
   .mobile-nav {
+    display: flex;
+  }
+
+  .mobile-auto-play-btn {
     display: flex;
   }
 
