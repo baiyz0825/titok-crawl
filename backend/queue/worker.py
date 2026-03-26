@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 from datetime import datetime
 
+from backend.config import settings
 from backend.scraper.user_scraper import UserScraper
 from backend.scraper.search_scraper import SearchScraper
 from backend.scraper.media_downloader import MediaDownloader
@@ -135,63 +137,23 @@ class TaskWorker:
         # Refresh work info if requested (re-visit each work page for updated stats)
         refreshed_count = 0
         if refresh_info and works:
-            logger.info(f"[Task {task_id}] Starting work info refresh for {len(works)} works")
-            progress_manager.update(task_id, 0.96, "刷新作品信息", f"准备刷新 {len(works)} 个作品的统计信息")
-            for i, work in enumerate(works):
-                try:
-                    # Pass both uid and sec_user_id for work refresh
-                    result = await self._refresh_work_info(task_id, work.aweme_id, {
-                        "sec_user_id": work.sec_user_id,
-                        "uid": work.uid
-                    })
-                    if result and not result.get("error"):
-                        refreshed_count += 1
-                        if (i + 1) % 10 == 0:
-                            logger.info(f"[Task {task_id}] Refreshed {i + 1}/{len(works)} work info")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to refresh info for {work.aweme_id}: {e}")
+            logger.info(f"[Task {task_id}] Starting parallel work info refresh for {len(works)} works")
+            progress_manager.update(task_id, 0.96, "刷新作品信息", f"准备并行刷新 {len(works)} 个作品")
+            refreshed_count = await self._refresh_works_info_parallel(task_id, works)
 
         # Scrape comments if requested
         comments_count = 0
         if scrape_comments and works:
-            logger.info(f"[Task {task_id}] Starting comment scraping for {len(works)} works")
-            progress_manager.update(task_id, 0.97, "采集评论", f"准备采集 {len(works)} 个作品的评论")
-            for i, work in enumerate(works):
-                try:
-                    comments = await self.comment_scraper.scrape_comments(
-                        work.aweme_id, max_pages=3, on_page=None
-                    )
-                    # Save comments
-                    for comment in comments:
-                        await crud.upsert_comment(comment)
-                    comments_count += len(comments)
-                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+            logger.info(f"[Task {task_id}] Starting parallel comment scraping for {len(works)} works")
+            progress_manager.update(task_id, 0.97, "采集评论", f"准备并行采集 {len(works)} 个作品的评论")
+            comments_count = await self._scrape_comments_parallel(task_id, works)
 
         # Download media if requested
         download_count = 0
         if download_media and works:
-            logger.info(f"[Task {task_id}] Starting media download for {len(works)} works")
-            progress_manager.update(task_id, 0.98, "下载媒体", f"准备下载 {len(works)} 个作品的媒体文件")
-            for i, work in enumerate(works):
-                try:
-                    progress_manager.update(
-                        task_id,
-                        0.98 + 0.01 * (i + 1) / len(works),
-                        f"下载媒体 {i+1}/{len(works)}",
-                        work.aweme_id
-                    )
-                    # Prefer uid over sec_user_id for media download
-                    author_identifier = work.uid if work.uid else work.sec_user_id
-                    await self.media_downloader.download_work_media(
-                        work.aweme_id, author_identifier, work.extra_data
-                    )
-                    download_count += 1
-                    if (i + 1) % 10 == 0:
-                        logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(works)} works")
-                except Exception as e:
-                    logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+            logger.info(f"[Task {task_id}] Starting parallel media download for {len(works)} works")
+            progress_manager.update(task_id, 0.98, "下载媒体", f"准备并行下载 {len(works)} 个作品")
+            download_count = await self._download_media_parallel(task_id, works)
 
         # Speech recognition if requested
         transcript_count = 0
@@ -296,50 +258,23 @@ class TaskWorker:
             # Refresh work info if requested
             refreshed_count = 0
             if refresh_info and works:
-                progress_manager.update(task_id, 0.61, "刷新作品信息", f"准备刷新 {len(works)} 个作品")
-                for i, work in enumerate(works):
-                    try:
-                        # Pass both uid and sec_user_id for work refresh
-                        result = await self._refresh_work_info(task_id, work.aweme_id, {
-                            "sec_user_id": work.sec_user_id,
-                            "uid": work.uid
-                        })
-                        if result and not result.get("error"):
-                            refreshed_count += 1
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to refresh info for {work.aweme_id}: {e}")
+                logger.info(f"[Task {task_id}] Starting parallel work info refresh for {len(works)} works")
+                progress_manager.update(task_id, 0.61, "刷新作品信息", f"准备并行刷新 {len(works)} 个作品")
+                refreshed_count = await self._refresh_works_info_parallel(task_id, works)
 
             # Download media if requested
             download_count = 0
             if params.get("download_media", False) and works:
-                for i, work in enumerate(works):
-                    progress_manager.update(
-                        task_id,
-                        0.6 + 0.35 * (i + 1) / len(works),
-                        f"下载媒体 {i+1}/{len(works)}",
-                        work.aweme_id
-                    )
-                    # Prefer uid over sec_user_id for media download
-                    author_identifier = work.uid if work.uid else work.sec_user_id
-                    await self.media_downloader.download_work_media(
-                        work.aweme_id, author_identifier, work.extra_data
-                    )
-                    download_count += 1
+                logger.info(f"[Task {task_id}] Starting parallel media download for {len(works)} works")
+                progress_manager.update(task_id, 0.7, "下载媒体", f"准备并行下载 {len(works)} 个作品")
+                download_count = await self._download_media_parallel(task_id, works)
 
             # Scrape comments if requested
             comments_count = 0
             if scrape_comments and works:
-                progress_manager.update(task_id, 0.96, "采集评论", f"准备采集 {len(works)} 个作品的评论")
-                for i, work in enumerate(works):
-                    try:
-                        comments = await self.comment_scraper.scrape_comments(
-                            work.aweme_id, max_pages=3, on_page=None
-                        )
-                        for comment in comments:
-                            await crud.upsert_comment(comment)
-                        comments_count += len(comments)
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+                logger.info(f"[Task {task_id}] Starting parallel comment scraping for {len(works)} works")
+                progress_manager.update(task_id, 0.85, "采集评论", f"准备并行采集 {len(works)} 个作品的评论")
+                comments_count = await self._scrape_comments_parallel(task_id, works)
 
             progress_manager.update(task_id, 1.0, "完成", "")
             return {
@@ -529,54 +464,16 @@ class TaskWorker:
             # Download media if requested
             download_count = 0
             if download_media and processed_works:
-                logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} liked works")
-                progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
-                for i, work in enumerate(processed_works):
-                    # Check if task is cancelled
-                    if await self._check_cancelled(task_id):
-                        logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
-                        break
-
-                    try:
-                        progress_manager.update(
-                            task_id,
-                            0.75 + 0.1 * (i + 1) / len(processed_works),
-                            f"下载媒体 {i+1}/{len(processed_works)}",
-                            work.aweme_id
-                        )
-                        # Prefer uid over sec_user_id for media download
-                        author_identifier = work.uid if work.uid else work.sec_user_id
-                        await self.media_downloader.download_work_media(
-                            work.aweme_id, author_identifier, work.extra_data
-                        )
-                        download_count += 1
-                        if (i + 1) % 10 == 0:
-                            logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} liked works")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+                logger.info(f"[Task {task_id}] Starting parallel media download for {len(processed_works)} liked works")
+                progress_manager.update(task_id, 0.75, "下载媒体", f"准备并行下载 {len(processed_works)} 个作品")
+                download_count = await self._download_media_parallel(task_id, processed_works)
 
             # Scrape comments if requested
             comments_count = 0
             if scrape_comments and processed_works:
-                logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} liked works")
-                progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
-                for i, work in enumerate(processed_works):
-                    # Check if task is cancelled
-                    if await self._check_cancelled(task_id):
-                        logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
-                        break
-
-                    try:
-                        comments = await self.comment_scraper.scrape_comments(
-                            work.aweme_id, max_pages=3, on_page=None
-                        )
-                        # Save comments
-                        for comment in comments:
-                            await crud.upsert_comment(comment)
-                        comments_count += len(comments)
-                        logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+                logger.info(f"[Task {task_id}] Starting parallel comment scraping for {len(processed_works)} liked works")
+                progress_manager.update(task_id, 0.86, "采集评论", f"准备并行采集 {len(processed_works)} 个作品的评论")
+                comments_count = await self._scrape_comments_parallel(task_id, processed_works)
 
             # Collect creators if requested (reuse the same page)
             creators_collected = 0
@@ -757,54 +654,16 @@ class TaskWorker:
             # Download media if requested
             download_count = 0
             if download_media and processed_works:
-                logger.info(f"[Task {task_id}] Starting media download for {len(processed_works)} favorite works")
-                progress_manager.update(task_id, 0.75, "下载媒体", f"准备下载 {len(processed_works)} 个作品的媒体文件")
-                for i, work in enumerate(processed_works):
-                    # Check if task is cancelled
-                    if await self._check_cancelled(task_id):
-                        logger.info(f"[Task {task_id}] Task was cancelled, stopping media download")
-                        break
-
-                    try:
-                        progress_manager.update(
-                            task_id,
-                            0.75 + 0.1 * (i + 1) / len(processed_works),
-                            f"下载媒体 {i+1}/{len(processed_works)}",
-                            work.aweme_id
-                        )
-                        # Prefer uid over sec_user_id for media download
-                        author_identifier = work.uid if work.uid else work.sec_user_id
-                        await self.media_downloader.download_work_media(
-                            work.aweme_id, author_identifier, work.extra_data
-                        )
-                        download_count += 1
-                        if (i + 1) % 10 == 0:
-                            logger.info(f"[Task {task_id}] Downloaded media for {i + 1}/{len(processed_works)} favorite works")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to download media for {work.aweme_id}: {e}")
+                logger.info(f"[Task {task_id}] Starting parallel media download for {len(processed_works)} favorite works")
+                progress_manager.update(task_id, 0.75, "下载媒体", f"准备并行下载 {len(processed_works)} 个作品")
+                download_count = await self._download_media_parallel(task_id, processed_works)
 
             # Scrape comments if requested
             comments_count = 0
             if scrape_comments and processed_works:
-                logger.info(f"[Task {task_id}] Starting comment scraping for {len(processed_works)} favorite works")
-                progress_manager.update(task_id, 0.86, "采集评论", f"准备采集 {len(processed_works)} 个作品的评论")
-                for i, work in enumerate(processed_works):
-                    # Check if task is cancelled
-                    if await self._check_cancelled(task_id):
-                        logger.info(f"[Task {task_id}] Task was cancelled, stopping comment scraping")
-                        break
-
-                    try:
-                        comments = await self.comment_scraper.scrape_comments(
-                            work.aweme_id, max_pages=3, on_page=None
-                        )
-                        # Save comments
-                        for comment in comments:
-                            await crud.upsert_comment(comment)
-                        comments_count += len(comments)
-                        logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
-                    except Exception as e:
-                        logger.warning(f"[Task {task_id}] Failed to scrape comments for {work.aweme_id}: {e}")
+                logger.info(f"[Task {task_id}] Starting parallel comment scraping for {len(processed_works)} favorite works")
+                progress_manager.update(task_id, 0.86, "采集评论", f"准备并行采集 {len(processed_works)} 个作品的评论")
+                comments_count = await self._scrape_comments_parallel(task_id, processed_works)
 
             # Collect creators if requested (reuse the same page)
             creators_collected = 0
@@ -1018,3 +877,162 @@ class TaskWorker:
                 logger.debug(f"Released page for task {task_id}")
             except Exception as e:
                 logger.warning(f"Failed to release page for task {task_id}: {e}")
+
+    async def _download_media_parallel(self, task_id: int, works: list, max_concurrent: int | None = None) -> int:
+        """并行下载媒体（无需页面，使用 HTTP 请求）
+
+        Args:
+            task_id: 任务 ID
+            works: 作品列表
+            max_concurrent: 最大并发数，默认使用 settings.MAX_CONCURRENT_DOWNLOADS
+
+        Returns:
+            成功下载的数量
+        """
+        if max_concurrent is None:
+            max_concurrent = settings.MAX_CONCURRENT_DOWNLOADS
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+        download_count = 0
+
+        async def download_one(work, index: int):
+            nonlocal download_count
+            async with semaphore:
+                if await self._check_cancelled(task_id):
+                    return 0
+                progress_manager.update(
+                    task_id, 0.75 + 0.2 * index / max(len(works), 1),
+                    f"下载媒体 {index+1}/{len(works)}", work.aweme_id
+                )
+                try:
+                    author_identifier = work.uid if work.uid else work.sec_user_id
+                    await self.media_downloader.download_work_media(
+                        work.aweme_id, author_identifier, work.extra_data
+                    )
+                    return 1
+                except Exception as e:
+                    logger.warning(f"Failed to download {work.aweme_id}: {e}")
+                    return 0
+
+        tasks = [download_one(w, i) for i, w in enumerate(works)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return sum(1 for r in results if r == 1)
+
+    async def _scrape_comments_parallel(self, task_id: int, works: list, max_concurrent: int | None = None) -> int:
+        """并行采集评论（使用子页面）
+
+        Args:
+            task_id: 任务 ID
+            works: 作品列表
+            max_concurrent: 最大并发数，默认使用 settings.MAX_CONCURRENT_COMMENTS
+
+        Returns:
+            采集到的评论总数
+        """
+        from backend.scraper.engine import engine
+
+        if max_concurrent is None:
+            max_concurrent = settings.MAX_CONCURRENT_COMMENTS
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def scrape_one(work, index: int):
+            async with semaphore:
+                if await self._check_cancelled(task_id):
+                    return 0
+
+                # 获取子页面
+                subpage_id, page = await engine.acquire_subpage(task_id)
+                try:
+                    comments = await self.comment_scraper.scrape_comments(
+                        work.aweme_id, max_pages=3, on_page=None, page=page
+                    )
+                    for comment in comments:
+                        await crud.upsert_comment(comment)
+                    logger.info(f"[Task {task_id}] Scraped {len(comments)} comments for {work.aweme_id}")
+                    return len(comments)
+                except Exception as e:
+                    logger.warning(f"Failed to scrape comments for {work.aweme_id}: {e}")
+                    return 0
+                finally:
+                    await engine.release_subpage(task_id, subpage_id)
+
+        tasks = [scrape_one(w, i) for i, w in enumerate(works)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return sum(r for r in results if isinstance(r, int))
+
+    async def _refresh_works_info_parallel(self, task_id: int, works: list, max_concurrent: int | None = None) -> int:
+        """并行刷新作品信息（使用子页面）
+
+        Args:
+            task_id: 任务 ID
+            works: 作品列表
+            max_concurrent: 最大并发数，默认使用 settings.MAX_CONCURRENT_REFRESH
+
+        Returns:
+            成功刷新的数量
+        """
+        from backend.scraper.engine import engine
+        from backend.scraper.interceptor import ResponseInterceptor
+        from backend.config import settings as config
+        from backend.db.models import Work
+
+        if max_concurrent is None:
+            max_concurrent = settings.MAX_CONCURRENT_REFRESH
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def refresh_one(work, index: int):
+            async with semaphore:
+                if await self._check_cancelled(task_id):
+                    return 0
+
+                subpage_id, page = await engine.acquire_subpage(task_id)
+                interceptor = ResponseInterceptor()
+
+                try:
+                    await interceptor.setup(page)
+                    url = f"{config.DOUYIN_BASE_URL}/video/{work.aweme_id}"
+                    ok = await engine.safe_goto(page, url)
+                    if not ok:
+                        return 0
+
+                    data = await interceptor.wait_for("aweme/detail", timeout=15)
+                    if not data:
+                        data = await interceptor.wait_for("detail", timeout=5)
+
+                    if data:
+                        aweme_detail = data.get("aweme_detail", data)
+                        stats = aweme_detail.get("statistics", {})
+                        author_info = aweme_detail.get("author", {})
+                        work_uid = work.uid or author_info.get("uid", "")
+                        work_sec_user_id = work.sec_user_id or author_info.get("sec_uid", "")
+
+                        updated_work = Work(
+                            aweme_id=work.aweme_id,
+                            uid=work_uid,
+                            sec_user_id=work_sec_user_id,
+                            type="video" if aweme_detail.get("aweme_type", 0) in (0, 4) else "note",
+                            title=aweme_detail.get("desc", ""),
+                            cover_url=aweme_detail.get("video", {}).get("cover", {}).get("url_list", [""])[0]
+                                if isinstance(aweme_detail.get("video", {}).get("cover"), dict) else "",
+                            duration=aweme_detail.get("video", {}).get("duration", 0),
+                            digg_count=stats.get("digg_count", 0),
+                            comment_count=stats.get("comment_count", 0),
+                            share_count=stats.get("share_count", 0),
+                            collect_count=stats.get("collect_count", 0),
+                            play_count=stats.get("play_count", 0),
+                        )
+                        await crud.upsert_work(updated_work)
+                        return 1
+                    return 0
+                except Exception as e:
+                    logger.warning(f"Failed to refresh {work.aweme_id}: {e}")
+                    return 0
+                finally:
+                    await interceptor.teardown()
+                    await engine.release_subpage(task_id, subpage_id)
+
+        tasks = [refresh_one(w, i) for i, w in enumerate(works)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return sum(1 for r in results if r == 1)

@@ -5,6 +5,8 @@ import random
 from datetime import datetime
 from typing import Callable
 
+from playwright.async_api import Page
+
 from backend.config import settings
 from backend.scraper.engine import engine
 from backend.scraper.interceptor import ResponseInterceptor
@@ -19,12 +21,43 @@ class CommentScraper:
         self.interceptor = ResponseInterceptor()
 
     async def scrape_comments(
-        self, aweme_id: str, max_pages: int = 3, on_page: Callable | None = None,
+        self,
+        aweme_id: str,
+        max_pages: int = 3,
+        on_page: Callable | None = None,
+        page: Page | None = None,
     ) -> list[Comment]:
-        """Scrape comments for a work by navigating to the video page."""
-        page = await engine.get_page()
-        self.interceptor.clear()
-        await self.interceptor.setup(page)
+        """Scrape comments for a work by navigating to the video page.
+
+        Args:
+            aweme_id: The work ID to scrape comments for
+            max_pages: Maximum number of comment pages to scrape
+            on_page: Callback function called after each page is scraped
+            page: Optional Playwright Page object. If None, a new page will be created.
+
+        Returns:
+            List of Comment objects
+        """
+        # Determine if we need to manage the page lifecycle
+        should_release = False
+        if page is None:
+            page = await engine.get_page()
+            should_release = True
+            logger.debug(f"Created new page for comment scraping: {aweme_id}")
+        else:
+            logger.debug(f"Using provided page for comment scraping: {aweme_id}")
+
+        # Setup interceptor - use class instance for self-managed pages, new instance for external pages
+        if should_release:
+            # Self-managed page: use class interceptor
+            self.interceptor.clear()
+            await self.interceptor.setup(page)
+            interceptor = self.interceptor
+        else:
+            # External page: create temporary interceptor to avoid conflicts
+            interceptor = ResponseInterceptor()
+            interceptor.clear()
+            await interceptor.setup(page)
 
         all_comments = []
         # Track parent comments that need full reply fetching
@@ -40,7 +73,7 @@ class CommentScraper:
                 return []
 
             # Wait for initial comments API response
-            data = await self.interceptor.wait_for("comment/list", timeout=15)
+            data = await interceptor.wait_for("comment/list", timeout=15)
             if data:
                 comments = self._parse_comments(data, aweme_id)
                 all_comments.extend(comments)
@@ -66,7 +99,7 @@ class CommentScraper:
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await page.wait_for_timeout(1500)
 
-                data = await self.interceptor.wait_for("comment/list", timeout=10)
+                data = await interceptor.wait_for("comment/list", timeout=10)
                 if not data:
                     break
 
@@ -97,7 +130,15 @@ class CommentScraper:
             return all_comments
 
         finally:
-            await self.interceptor.teardown()
+            await interceptor.teardown()
+            if should_release:
+                # Only close pages we created ourselves
+                try:
+                    if not page.is_closed():
+                        await page.close()
+                        logger.debug(f"Closed self-managed page for comment scraping")
+                except Exception as e:
+                    logger.warning(f"Failed to close page: {e}")
 
     def _collect_parents_needing_replies(
         self, data: dict, parents: list[tuple[str, int, int]]

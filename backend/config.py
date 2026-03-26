@@ -31,6 +31,12 @@ class Settings:
     # 可通过环境变量 MAX_CONCURRENT_TASKS 调整（推荐值：1-5）
     MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "3"))
 
+    # 任务内并行控制
+    MAX_SUBPAGES_PER_TASK = int(os.environ.get("MAX_SUBPAGES_PER_TASK", "3"))  # 每个任务最大子页面数
+    MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "3"))  # 并行下载数
+    MAX_CONCURRENT_COMMENTS = int(os.environ.get("MAX_CONCURRENT_COMMENTS", "2"))  # 并行评论采集数
+    MAX_CONCURRENT_REFRESH = int(os.environ.get("MAX_CONCURRENT_REFRESH", "2"))  # 并行作品刷新数
+
     # Server ports (从环境变量读取，支持高位端口避免冲突)
     API_HOST = "0.0.0.0"
     API_PORT = int(os.environ.get("BACKEND_PORT", "18000"))

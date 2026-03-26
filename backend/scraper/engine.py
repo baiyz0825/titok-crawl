@@ -28,17 +28,22 @@ class ScraperEngine:
 
     # Maximum number of concurrent pages to prevent resource exhaustion
     MAX_PAGES = 6
+    # Maximum number of subpages per task for parallel operations
+    MAX_SUBPAGES_PER_TASK = 3
 
     def __init__(self):
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._captcha_active: bool = False
-        # Page pool: one page per concurrent task
-        self._page_pool: dict[int, Page] = {}  # task_id -> Page
+        # Page pool: task_id -> list of (subpage_id, Page)
+        self._page_pool: dict[int, list[tuple[str, Page]]] = {}
         self._page_locks: dict[int, asyncio.Lock] = {}  # task_id -> Lock
         self._pool_lock = asyncio.Lock()  # Protects access to _page_pool and _page_locks
-        self._page_semaphore: asyncio.Semaphore | None = None  # Limit concurrent pages
+        # Semaphore to limit global page count (initialized in start())
+        self._page_semaphore: asyncio.Semaphore | None = None
+        # Per-task semaphores to limit subpage count
+        self._subpage_semaphores: dict[int, asyncio.Semaphore] = {}
 
     @property
     def captcha_active(self) -> bool:
@@ -51,6 +56,8 @@ class ScraperEngine:
     async def start(self):
         """Start browser with persistent context and anti-detection."""
         settings.ensure_dirs()
+        # Initialize page semaphore to limit global page count
+        self._page_semaphore = asyncio.Semaphore(self.MAX_PAGES)
         self._playwright = await async_playwright().start()
 
         self._browser = await self._playwright.chromium.launch(
@@ -117,13 +124,179 @@ class ScraperEngine:
             await self._playwright.stop()
             self._playwright = None
 
+    def _count_total_pages(self) -> int:
+        """Calculate current total number of pages across all tasks."""
+        return sum(len(pages) for pages in self._page_pool.values())
+
+    async def acquire_subpage(self, task_id: int, subpage_id: str | None = None) -> tuple[str, Page]:
+        """Acquire a subpage for parallel operations within a task.
+
+        Args:
+            task_id: Task ID
+            subpage_id: Optional subpage identifier for reusing an existing subpage
+
+        Returns:
+            tuple[str, Page]: (subpage_id, Page)
+
+        Raises:
+            RuntimeError: If page limits are exceeded or engine not started
+        """
+        if self._context is None:
+            raise RuntimeError("Engine not started")
+
+        if self._page_semaphore is None:
+            raise RuntimeError("Engine not started - semaphore not initialized")
+
+        # Step 1: Initialize task's page list and semaphore under lock
+        async with self._pool_lock:
+            if task_id not in self._page_pool:
+                self._page_pool[task_id] = []
+                self._page_locks[task_id] = asyncio.Lock()
+                self._subpage_semaphores[task_id] = asyncio.Semaphore(self.MAX_SUBPAGES_PER_TASK)
+
+            # If subpage_id specified, try to reuse existing subpage
+            if subpage_id is not None:
+                for existing_id, existing_page in self._page_pool[task_id]:
+                    if existing_id == subpage_id:
+                        logger.debug(f"Task #{task_id} reusing subpage '{subpage_id}'")
+                        return (subpage_id, existing_page)
+
+            # Check task-level subpage limit
+            if len(self._page_pool[task_id]) >= self.MAX_SUBPAGES_PER_TASK:
+                subpage_ids = [sid for sid, _ in self._page_pool[task_id]]
+                raise RuntimeError(
+                    f"Task #{task_id} subpage limit ({self.MAX_SUBPAGES_PER_TASK}) reached. "
+                    f"Existing subpages: {subpage_ids}"
+                )
+
+        # Step 2: Wait for global page semaphore OUTSIDE the lock to avoid deadlock
+        await self._page_semaphore.acquire()
+
+        # Step 3: Double-check and create new page under lock
+        async with self._pool_lock:
+            # Double-check task-level limit
+            if len(self._page_pool[task_id]) >= self.MAX_SUBPAGES_PER_TASK:
+                # Release semaphore since we're not creating a page
+                self._page_semaphore.release()
+                subpage_ids = [sid for sid, _ in self._page_pool[task_id]]
+                raise RuntimeError(
+                    f"Task #{task_id} subpage limit ({self.MAX_SUBPAGES_PER_TASK}) reached. "
+                    f"Existing subpages: {subpage_ids}"
+                )
+
+            # Generate subpage_id if not provided
+            if subpage_id is None:
+                subpage_id = f"sub_{len(self._page_pool[task_id])}"
+
+            # Create new page
+            page = await self._context.new_page()
+            page.set_default_timeout(settings.PAGE_TIMEOUT)
+
+            # Store in pool
+            self._page_pool[task_id].append((subpage_id, page))
+
+            total_pages = self._count_total_pages()
+            logger.info(
+                f"Task #{task_id} created subpage '{subpage_id}' "
+                f"(task pages: {len(self._page_pool[task_id])}/{self.MAX_SUBPAGES_PER_TASK}, "
+                f"total: {total_pages}/{self.MAX_PAGES})"
+            )
+            return (subpage_id, page)
+
+    async def release_subpage(self, task_id: int, subpage_id: str):
+        """Release a specific subpage.
+
+        Args:
+            task_id: Task ID
+            subpage_id: Subpage identifier to release
+        """
+        page_to_close = None
+
+        async with self._pool_lock:
+            if task_id not in self._page_pool:
+                logger.debug(f"Task #{task_id} has no pages to release")
+                return
+
+            # Find and remove the subpage
+            for i, (existing_id, page) in enumerate(self._page_pool[task_id]):
+                if existing_id == subpage_id:
+                    self._page_pool[task_id].pop(i)
+                    page_to_close = page
+                    break
+
+            if page_to_close is None:
+                logger.debug(f"Task #{task_id} subpage '{subpage_id}' not found")
+                return
+
+            # Clean up empty task entries
+            if not self._page_pool[task_id]:
+                del self._page_pool[task_id]
+                self._page_locks.pop(task_id, None)
+                self._subpage_semaphores.pop(task_id, None)
+
+        # Close page outside of lock
+        if page_to_close is not None:
+            try:
+                if page_to_close.is_closed():
+                    logger.info(f"Task #{task_id} subpage '{subpage_id}' was already closed")
+                else:
+                    await page_to_close.close()
+                    logger.info(f"Task #{task_id} subpage '{subpage_id}' closed")
+            except Exception as e:
+                logger.warning(f"Failed to close subpage '{subpage_id}' for task #{task_id}: {e}")
+
+        # Release global semaphore
+        if self._page_semaphore is not None:
+            self._page_semaphore.release()
+
+    async def release_all_subpages(self, task_id: int):
+        """Release all subpages for a task.
+
+        Args:
+            task_id: Task ID
+        """
+        pages_to_close = []
+
+        async with self._pool_lock:
+            if task_id not in self._page_pool:
+                logger.debug(f"Task #{task_id} has no pages to release")
+                return
+
+            # Collect all pages to close
+            pages_to_close = [(sid, page) for sid, page in self._page_pool[task_id]]
+            self._page_pool[task_id] = []
+
+            # Clean up task entries
+            del self._page_pool[task_id]
+            self._page_locks.pop(task_id, None)
+            self._subpage_semaphores.pop(task_id, None)
+
+        # Close pages outside of lock
+        semaphore_releases = 0
+        for subpage_id, page in pages_to_close:
+            try:
+                if page.is_closed():
+                    logger.debug(f"Task #{task_id} subpage '{subpage_id}' was already closed")
+                else:
+                    await page.close()
+                    logger.debug(f"Task #{task_id} subpage '{subpage_id}' closed")
+                    semaphore_releases += 1
+            except Exception as e:
+                logger.warning(f"Failed to close subpage '{subpage_id}' for task #{task_id}: {e}")
+                semaphore_releases += 1  # Still release semaphore even if close failed
+
+        if semaphore_releases > 0 and self._page_semaphore is not None:
+            for _ in range(semaphore_releases):
+                self._page_semaphore.release()
+
+        if pages_to_close:
+            logger.info(f"Task #{task_id} released {len(pages_to_close)} subpages")
+
     async def acquire_page(self, task_id: int) -> Page:
-        """Acquire a page for a specific task.
+        """Backward compatible: acquire main page for a task.
 
         Each task gets its own page that is reused for the entire task duration.
         Different tasks use different pages to avoid conflicts.
-
-        Maximum of MAX_PAGES (6) pages can be active at any time.
 
         Args:
             task_id: Unique identifier for the task (from scheduler)
@@ -134,65 +307,18 @@ class ScraperEngine:
         Raises:
             RuntimeError: If page limit is exceeded
         """
-        if self._context is None:
-            raise RuntimeError("Engine not started")
-
-        async with self._pool_lock:
-            # Check if this task already has a page
-            if task_id in self._page_pool:
-                logger.debug(f"Task #{task_id} reusing existing page")
-                return self._page_pool[task_id]
-
-            # Check if we've reached the page limit
-            if len(self._page_pool) >= self.MAX_PAGES:
-                active_tasks = list(self._page_pool.keys())
-                logger.error(
-                    f"Page limit exceeded: {len(self._page_pool)}/{self.MAX_PAGES}. "
-                    f"Active tasks: {active_tasks}"
-                )
-                raise RuntimeError(
-                    f"Maximum page limit ({self.MAX_PAGES}) reached. "
-                    f"Active tasks: {active_tasks}. "
-                    f"Please wait for existing tasks to complete."
-                )
-
-            # Create new page for this task
-            page = await self._context.new_page()
-            page.set_default_timeout(settings.PAGE_TIMEOUT)
-
-            # Store in pool
-            self._page_pool[task_id] = page
-            self._page_locks[task_id] = asyncio.Lock()
-
-            logger.info(f"Task #{task_id} assigned new page (total pages: {len(self._page_pool)}/{self.MAX_PAGES})")
-            return page
+        subpage_id, page = await self.acquire_subpage(task_id, "main")
+        return page
 
     async def release_page(self, task_id: int):
-        """Release and close a page for a specific task.
+        """Backward compatible: release all pages for a task.
 
         Should be called when the task is complete to free resources.
 
         Args:
             task_id: Unique identifier for the task
         """
-        async with self._pool_lock:
-            if task_id not in self._page_pool:
-                # Silently return - page may have already been released or was never acquired
-                logger.debug(f"Task #{task_id} has no page to release (may have been released already)")
-                return
-
-            page = self._page_pool.pop(task_id)
-            self._page_locks.pop(task_id, None)
-
-            try:
-                # Check if page is still valid before closing
-                if page.is_closed():
-                    logger.info(f"Task #{task_id} page was already closed (remaining pages: {len(self._page_pool)})")
-                else:
-                    await page.close()
-                    logger.info(f"Task #{task_id} page closed (remaining pages: {len(self._page_pool)})")
-            except Exception as e:
-                logger.warning(f"Failed to close page for task #{task_id}: {e}")
+        await self.release_all_subpages(task_id)
 
     async def get_page(self) -> Page:
         """Legacy method - creates a new page each time.
