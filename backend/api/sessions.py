@@ -308,21 +308,24 @@ async def input_code(body: CodeInput):
 
 @router.get("/current-user")
 async def get_current_user():
-    """获取当前登录用户信息（从数据库读取，不触发 playwright）"""
+    """获取当前登录用户信息"""
     # 先检查是否已登录（只检查 cookies，不导航）
     is_logged_in = await engine.check_login()
     if not is_logged_in:
         raise HTTPException(status_code=401, detail="未登录")
 
-    # 从数据库中获取最近更新的用户作为当前用户
-    # 不使用 playwright 获取，避免不必要的导航
     try:
         from backend.db import crud
 
-        # 尝试从最近采集的用户中获取
-        users = await crud.get_users(page=1, size=1, sort_by="updated_at", sort_order="DESC")
-        if users and len(users) > 0:
-            return users[0].model_dump()
+        # 获取当前登录用户的 sec_user_id
+        sec_user_id = await engine.get_current_user_id()
+        if not sec_user_id:
+            raise HTTPException(status_code=404, detail="无法获取当前用户 ID，请点击\"采集当前用户\"按钮")
+
+        # 从数据库中查找这个用户
+        user = await crud.get_user(sec_user_id)
+        if user:
+            return user.model_dump()
         else:
             raise HTTPException(status_code=404, detail="用户信息未找到，请点击\"采集当前用户\"按钮")
     except HTTPException:
