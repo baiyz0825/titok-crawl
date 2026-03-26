@@ -1,7 +1,10 @@
 import aiosqlite
+import logging
 from pathlib import Path
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 _CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS users (
