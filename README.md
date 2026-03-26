@@ -122,44 +122,103 @@ graph TB
 #### 核心页面
 
 1. **系统概览 (Dashboard)**
+
+   全局监控面板，实时展示系统运行状态。
+
+   ![Dashboard](docs/screenshots/dashboard.png)
+
+   **核心功能：**
    - 全局统计数据（用户数、作品数、评论数、媒体数）
    - 任务状态分布可视化
    - 登录状态与验证码状态监控
 
-2. **用户管理 (Users)**
+2. **搜索用户 (Search)**
+
+   从抖音搜索并发现新用户。
+
+   ![Search](docs/screenshots/search.png)
+
+   **核心功能：**
+   - 输入关键词搜索抖音用户
+   - 本地优先匹配已采集用户
+   - 直接发起采集任务
+
+3. **用户管理 (Users)**
+
+   管理已采集的用户数据。
+
+   ![Users](docs/screenshots/users.png)
+
+   **核心功能：**
    - 用户搜索与采集
    - 用户列表管理（搜索、详情、更新、删除）
    - 批量操作支持
 
-3. **作品列表 (Works)**
+4. **作品列表 (Works)**
+
+   浏览和管理已采集的作品数据。
+
+   ![Works](docs/screenshots/works.png)
+
+   **核心功能：**
    - 多维度筛选（用户、类型、时间范围）
    - 作品详情查看（视频播放、图文轮播）
    - 评论树展示
    - 批量重新采集
 
-4. **预览播放 (Preview)**
+5. **预览播放 (Preview)**
+
+   仿抖音的垂直滚动视频播放体验。
+
+   ![Preview](docs/screenshots/preview.png)
+
+   **核心功能：**
    - 🆕 **双模式切换**：单用户模式 / 全局 Feed 模式
    - 🆕 **音频控制**：音量切换按钮
    - 仿抖音垂直滚动体验
    - 互动功能（点赞、收藏、评论）
 
-5. **任务队列 (Tasks)**
+6. **任务队列 (Tasks)**
+
+   实时监控和管理所有采集任务。
+
+   ![Tasks](docs/screenshots/tasks.png)
+
+   **核心功能：**
    - 实时任务状态监控
    - 任务优先级调整
    - 暂停/恢复/取消操作
    - 批量管理
 
-6. **定时任务 (Schedules)**
+7. **定时任务 (Schedules)**
+
+   配置自动定期同步用户数据。
+
+   ![Schedules](docs/screenshots/schedules.png)
+
+   **核心功能：**
    - 自动定期同步用户数据
    - 灵活的执行间隔配置
    - 启用/禁用控制
 
-7. **服务器日志 (Logs)**
+8. **服务器日志 (Logs)**
+
+   实时查看后端运行日志。
+
+   ![Logs](docs/screenshots/logs.png)
+
+   **核心功能：**
    - 实时日志流（SSE）
    - 日志级别筛选
    - 历史日志加载
 
-8. **登录管理 (Sessions)**
+9. **登录管理 (Sessions)**
+
+   管理抖音账号的登录状态。
+
+   ![Sessions](docs/screenshots/sessions.png)
+
+   **核心功能：**
    - 扫码登录
    - Cookie 自动保存
    - 登录状态监控
