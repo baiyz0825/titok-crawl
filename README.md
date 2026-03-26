@@ -2,6 +2,8 @@
 
 <div align="center">
 
+[English](README-en.md) | **简体中文**
+
 基于 Playwright 的抖音数据采集与分析平台
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
