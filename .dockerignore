@@ -1,15 +1,75 @@
+# Git and IDE
+.git
+.idea
+.vscode
+.claude*
+
+# Python
 .venv
 __pycache__
 *.pyc
+*.pyo
+*.egg-info
+.eggs
+*.egg
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+ htmlcov
+
+# Node.js
 node_modules
-frontend/node_modules
+npm-debug.log*
+yarn-error.log*
+yarn.lock
+.npm
+
+# Build artifacts
 frontend/dist
+backend/*.egg-info
+*.egg
+
+# Data and logs
 data
-.git
-.claude*
-openspec
+*.log
+*.tmp
+
+# Temporary and debug files
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.orig
+*~
+
+# Test and documentation
+tests
 docs
 *.md
-*.jpg
-*.png
-.DS_Store
+!README.md
+!CLAUDE.md
+
+# Deployment scripts (not needed in image)
+deploy/*.sh
+build.sh
+slim-build.sh
+install-playwright.sh
+
+*.txt
+snapshot*.txt
+
+# Debug and diagnostic files
+diagnose*.py
+debug*.py
+test*.py
+quick*.py
+simple*.py
+direct*.py
+systematic*.py
+verify*.py
+fix*.py
+replace*.py
+use_*.py
+

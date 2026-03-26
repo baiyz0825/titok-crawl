@@ -1,9 +1,6 @@
 #!/bin/sh
-set -e
 
-echo "=== Douyin Scraper All-in-One Container ==="
-
-# 创建数据目录
+# 初始化数据目录
 mkdir -p /app/data/db /app/data/media
 
 # 启动后端 API (后台运行)
@@ -26,7 +23,6 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
-
 # 启动 nginx (前台运行)
 echo "Starting nginx..."
 exec nginx -g "daemon off;"

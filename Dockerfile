@@ -10,41 +10,47 @@ COPY frontend/ ./
 RUN npm run build
 
 # ============================================
-# Stage 2: Python runtime (backend)
+# Stage 2: All-in-one runtime (backend + frontend + nginx)
 # ============================================
 FROM python:3.13-slim
 
-# System dependencies: Chromium for Playwright, ffmpeg for whisper, curl for healthcheck
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITE_BYTECODE=1
+ENV PYTHONFAULTHANDLER=ignore
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl \
-    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
-    libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
-    libgtk-3-0 libx11-xcb1 fonts-noto-cjk \
+    curl \
+    ffmpeg \
+    nginx \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Python dependencies
+# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && playwright install chromium --with-deps
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright chromium
+RUN playwright install chromium --with-deps
 
 # Copy backend code
 COPY backend/ ./backend/
 
-# Copy frontend dist（供本地 run.sh 模式使用 + entrypoint 复制到 shared volume）
+# Copy frontend dist
 COPY --from=frontend-build /build/dist ./frontend/dist
 
-# Data volume
-VOLUME /app/data
+# Create data directories
+RUN mkdir -p /app/data/db /app/data/media
 
+# Copy nginx config and entrypoint
+COPY deploy/nginx.conf /etc/nginx/sites-available/default
+COPY deploy/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+EXPOSE 80 8000 8001
+VOLUME ["/app/data"]
 ENV HEADLESS=true
-
-EXPOSE 8000 8001
-
-# Entrypoint: 如果 /shared/html 目录存在（mounted volume），把 dist 复制过去供 Nginx 使用
-COPY deploy/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "-m", "backend.main"]
+CMD ["/app/entrypoint.sh"]
