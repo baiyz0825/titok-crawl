@@ -587,12 +587,27 @@ async def get_tasks(
 
 
 async def get_next_pending_task() -> Task | None:
+    """Atomically get and lock the next pending task to prevent race conditions.
+
+    Uses a transaction with immediate UPDATE to ensure only one worker
+    can claim a task at a time.
+    """
+    # Use atomic UPDATE with RETURNING to prevent race conditions
     cursor = await db.conn.execute(
-        "SELECT * FROM tasks WHERE status = 'pending' ORDER BY priority DESC, created_at ASC LIMIT 1"
+        """UPDATE tasks
+           SET status = 'queued'
+           WHERE id = (
+               SELECT id FROM tasks
+               WHERE status = 'pending'
+               ORDER BY priority DESC, created_at ASC
+               LIMIT 1
+           )
+           RETURNING *"""
     )
     row = await cursor.fetchone()
     if row is None:
         return None
+    await db.conn.commit()
     return Task(**dict(row))
 
 
