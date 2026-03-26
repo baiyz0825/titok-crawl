@@ -138,8 +138,14 @@ class Database:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(str(self.db_path))
         self._conn.row_factory = aiosqlite.Row
+        # Enable WAL mode for better concurrent read/write performance
+        # This prevents frontend from blocking when backend is writing
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA synchronous=NORMAL")
+        await self._conn.execute("PRAGMA busy_timeout=30000")  # 30 seconds timeout
         await self._conn.executescript(_CREATE_TABLES_SQL)
         await self._conn.commit()
+        logger.info("Database connected with WAL mode enabled")
         # Migrations for existing databases
         await self._migrate()
 
@@ -206,8 +212,17 @@ class Database:
 
     async def close(self):
         if self._conn:
-            await self._conn.close()
-            self._conn = None
+            try:
+                # Perform WAL checkpoint to ensure all data is written
+                await self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                await self._conn.commit()
+                logger.info("WAL checkpoint completed")
+            except Exception as e:
+                logger.warning(f"WAL checkpoint failed: {e}")
+            finally:
+                await self._conn.close()
+                self._conn = None
+                logger.info("Database connection closed")
 
     @property
     def conn(self) -> aiosqlite.Connection:

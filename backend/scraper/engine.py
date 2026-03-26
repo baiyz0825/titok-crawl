@@ -503,33 +503,72 @@ class ScraperEngine:
         self._captcha_active = False
         return False
 
-    async def safe_goto(self, page: Page, url: str, **kwargs) -> bool:
+    async def safe_goto(self, page: Page, url: str, retries: int = 2, **kwargs) -> bool:
         """Navigate to URL and handle captcha if it appears.
         Returns True if page loaded successfully (captcha resolved or not present).
         Returns False if navigation fails (aborted, timeout, etc.).
+
+        Args:
+            page: Playwright page object
+            url: URL to navigate to
+            retries: Number of retry attempts (default 2)
+            **kwargs: Additional arguments for page.goto()
         """
-        try:
-            # Random pre-navigation delay to mimic human behavior
-            pre_delay = random.uniform(1.0, 3.0)
-            await page.wait_for_timeout(int(pre_delay * 1000))
+        for attempt in range(retries):
+            try:
+                # Random pre-navigation delay to mimic human behavior
+                pre_delay = random.uniform(1.0, 3.0)
+                await page.wait_for_timeout(int(pre_delay * 1000))
 
-            kwargs.setdefault("wait_until", "domcontentloaded")
-            await page.goto(url, **kwargs)
+                kwargs.setdefault("wait_until", "domcontentloaded")
+                await page.goto(url, **kwargs)
 
-            # Randomized post-navigation wait
-            post_delay = random.uniform(1.5, 3.0)
-            await page.wait_for_timeout(int(post_delay * 1000))
+                # Randomized post-navigation wait
+                post_delay = random.uniform(1.5, 3.0)
+                await page.wait_for_timeout(int(post_delay * 1000))
 
-            if await self.detect_captcha(page):
-                resolved = await self.wait_for_captcha_resolve(page)
-                if not resolved:
+                # Check for captcha after successful navigation
+                if await self.detect_captcha(page):
+                    resolved = await self.wait_for_captcha_resolve(page)
+                    if not resolved:
+                        return False
+                    # If captcha resolved, page might need refresh - retry navigation
+                    continue
+
+                return True
+
+            except Exception as e:
+                # Catch navigation errors (ERR_ABORTED, ERR_CONNECTION_CLOSED, etc.)
+                error_str = str(e)
+                is_aborted = "ERR_ABORTED" in error_str
+                is_closed = "Target page, context or browser has been closed" in error_str
+
+                if is_closed:
+                    logger.warning(f"Page closed, cannot retry: {e}")
                     return False
 
-            return True
-        except Exception as e:
-            # Catch navigation errors (ERR_ABORTED, ERR_CONNECTION_CLOSED, etc.)
-            logger.warning(f"Navigation failed for {url}: {e}")
-            return False
+                if is_aborted:
+                    # Navigation was aborted (likely due to captcha popup)
+                    logger.warning(f"Navigation aborted for {url} (attempt {attempt + 1}/{retries}): {e}")
+                    # Wait a bit and check for captcha
+                    await page.wait_for_timeout(2000)
+                    if await self.detect_captcha(page):
+                        resolved = await self.wait_for_captcha_resolve(page)
+                        if resolved:
+                            logger.info(f"Captcha resolved, retrying navigation to {url}")
+                            continue  # Retry navigation
+                    # No captcha detected but navigation aborted, retry anyway
+                    await page.wait_for_timeout(1000)
+                    continue
+                else:
+                    logger.warning(f"Navigation failed for {url}: {e}")
+                    if attempt < retries - 1:
+                        logger.info(f"Retrying navigation (attempt {attempt + 2}/{retries})")
+                        continue
+                    return False
+
+        logger.error(f"All {retries} navigation attempts failed for {url}")
+        return False
 
     async def wait_for_login(self) -> bool:
         """Navigate to Douyin and wait for user to scan QR code.

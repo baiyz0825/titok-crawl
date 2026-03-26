@@ -132,6 +132,7 @@
             preload="auto"
             :poster="work.cover_url"
             @click="togglePlay($event)"
+            @loadeddata="onVideoLoaded($event, work)"
           ></video>
           <div v-else class="feed-cover" @click="togglePlay($event)">
             <img v-if="work.cover_url" :src="work.cover_url" @error="(e: any) => e.target.style.display = 'none'" />
@@ -381,11 +382,7 @@ function observeCards() {
             if (!work._loaded && !work._loading) {
               loadVideoUrl(work)
             }
-            // 自动播放（仅当启用时）
-            if (autoPlayEnabled.value) {
-              const video = el.querySelector('video')
-              if (video) video.play().catch(() => {})
-            }
+            // 注意：不在这里尝试播放，            // 自动播放将在 @loadeddata 事件中处理
           } else {
             // 暂停
             const video = el.querySelector('video')
@@ -438,6 +435,18 @@ async function loadVideoUrl(work: any) {
   }
   work._loading = false
   work._loaded = true
+
+  // 视频加载完成后，如果启用自动播放且卡片在视口内，自动播放
+  if (autoPlayEnabled.value && work._videoUrl) {
+    await nextTick()
+    const card = feedRef.value?.querySelector(`[data-aweme-id="${work.aweme_id}"]`)
+    if (card) {
+      const video = card.querySelector('video')
+      if (video) {
+        video.play().catch(() => {})
+      }
+    }
+  }
 }
 
 // --- 评论面板 ---
@@ -498,6 +507,21 @@ function togglePlay(e: Event) {
     video.play().catch(() => {})
   } else {
     video.pause()
+  }
+}
+
+// 视频数据加载完成后自动播放
+function onVideoLoaded(e: Event, work: any) {
+  if (!autoPlayEnabled.value || !work._videoUrl) return
+  const video = e.target as HTMLVideoElement
+  // 检查视频是否在视口内
+  const card = video.closest('.feed-card')
+  if (card) {
+    const rect = card.getBoundingClientRect()
+    const inViewport = rect.top < window.innerHeight * 0.7 && rect.bottom > window.innerHeight * 0.3
+    if (inViewport) {
+      video.play().catch(() => {})
+    }
   }
 }
 

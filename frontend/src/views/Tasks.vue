@@ -9,7 +9,7 @@
     <div class="stats-panel" v-loading="statsLoading">
       <div class="stat-card">
         <div class="stat-icon" style="background: #dbeafe; color: #0284c7;">
-          <el-icon :size="24"><Document /></el-icon>
+          <el-icon :size="24"><component :is="'Document'" /></el-icon>
         </div>
         <div class="stat-content">
           <div class="stat-label">今日任务</div>
@@ -24,7 +24,7 @@
 
       <div class="stat-card">
         <div class="stat-icon" style="background: #fef3c7; color: #d97706;">
-          <el-icon :size="24"><Clock /></el-icon>
+          <el-icon :size="24"><component :is="'Clock'" /></el-icon>
         </div>
         <div class="stat-content">
           <div class="stat-label">等待中</div>
@@ -35,7 +35,7 @@
 
       <div class="stat-card">
         <div class="stat-icon" style="background: #d1fae5; color: #059669;">
-          <el-icon :size="24"><SuccessFilled /></el-icon>
+          <el-icon :size="24"><component :is="'SuccessFilled'" /></el-icon>
         </div>
         <div class="stat-content">
           <div class="stat-label">成功率</div>
@@ -46,7 +46,7 @@
 
       <div class="stat-card">
         <div class="stat-icon" style="background: #e0e7ff; color: #7c3aed;">
-          <el-icon :size="24"><Setting /></el-icon>
+          <el-icon :size="24"><component :is="'Setting'" /></el-icon>
         </div>
         <div class="stat-content">
           <div class="stat-label">系统状态</div>
@@ -427,7 +427,17 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { SuccessFilled, CircleCloseFilled, Clock, VideoPause } from '@element-plus/icons-vue'
+import {
+  SuccessFilled,
+  CircleCloseFilled,
+  Clock,
+  VideoPause,
+  VideoPlay,
+  RefreshRight,
+  CircleClose,
+  Download,
+  Delete
+} from '@element-plus/icons-vue'
 import client from '../api/client'
 
 const tasks = ref<any[]>([])

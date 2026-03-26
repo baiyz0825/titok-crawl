@@ -38,7 +38,7 @@
         </div>
       </div>
 
-      <el-table :data="users" v-loading="loading" @selection-change="(val: any[]) => selectedUsers = val" style="width: 100%">
+      <el-table :data="users" v-loading="loading" @selection-change="(val: any[]) => selectedUsers = val" @sort-change="handleSortChange" style="width: 100%">
         <el-table-column type="selection" width="44" />
         <el-table-column label="用户" min-width="220">
           <template #default="{ row }">
@@ -382,6 +382,25 @@ async function fetchUsers() {
 }
 
 function handleSizeChange() {
+  page.value = 1
+  fetchUsers()
+}
+
+function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+  if (order) {
+    // 映射表格列 prop 到 API 参数
+    const propMap: Record<string, string> = {
+      'follower_count': 'follower_count',
+      'total_favorited': 'total_favorited',
+      'aweme_count': 'aweme_count',
+      'updated_at': 'updated_at'
+    }
+    sortBy.value = propMap[prop] || prop
+    sortOrder.value = order === 'ascending' ? 'ASC' : 'DESC'
+  } else {
+    sortBy.value = 'updated_at'
+    sortOrder.value = 'DESC'
+  }
   page.value = 1
   fetchUsers()
 }

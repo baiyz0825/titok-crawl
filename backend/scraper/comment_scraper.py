@@ -157,6 +157,11 @@ class CommentScraper:
         """Fetch complete reply threads via comment/list/reply API using page.evaluate."""
         all_replies = []
         for i, (comment_id, reply_total, inline_count) in enumerate(parents):
+            # Check if page is still valid before processing
+            if page.is_closed():
+                logger.warning(f"Page closed while fetching replies, stopping at comment {comment_id}")
+                break
+
             cursor = 0
             fetched = 0
             max_reply_pages = 20  # safety limit
@@ -259,7 +264,7 @@ class CommentScraper:
 
     def _parse_single_comment(self, item: dict, aweme_id: str, parent_comment_id: str | None = None) -> Comment:
         cid = str(item.get("cid", ""))
-        user = item.get("user", {})
+        user = item.get("user") or {}  # Ensure user is a dict, handle None case
         create_time = item.get("create_time", 0)
 
         # Determine parent: explicit param > reply_id field from API
@@ -269,10 +274,13 @@ class CommentScraper:
             if reply_id and reply_id != "0":
                 reply_to = reply_id
 
+        # Get user_uid with fallback to cid (comment id) as placeholder
+        user_uid = str(user.get("uid", "")) if user.get("uid") else f"unknown_{cid}"
+
         return Comment(
             comment_id=cid,
             aweme_id=aweme_id,
-            user_uid=str(user.get("uid", "")) if user.get("uid") else "",
+            user_uid=user_uid,
             user_nickname=user.get("nickname", ""),
             user_sec_uid=user.get("sec_uid", ""),
             user_avatar=user.get("avatar_thumb", {}).get("url_list", [""])[0]

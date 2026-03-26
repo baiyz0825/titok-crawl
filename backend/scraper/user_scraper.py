@@ -149,50 +149,42 @@ class UserScraper:
         await interceptor.setup(page)
 
         try:
-            # 检查是否已经在正确的用户页面
-            current_url = page.url
-            # 注意：不要在这里调用 get_current_user_id()，因为它会导航到 /user/self
-            # is_current_user 参数已经从外部传入
-
-            # 如果已经在目标用户页面，不需要重新导航
-            # 注意：需要精确匹配，避免 /user/self?showTab=like 被误判为 /user/self
+            # 构建目标 URL
+            # 注意：即使已经在目标用户页面，也需要重新导航以触发 API 请求
+            # 因为拦截器需要拦截新的 API 响应
             if is_current_user:
-                # 当前用户：必须在 /user/self 且不能有 showTab 参数
-                already_on_page = ("/user/self" in current_url and
-                                   "showTab" not in current_url)
+                logger.info(f"Navigating to /user/self for current user: {sec_user_id}")
+                url = f"{settings.DOUYIN_BASE_URL}/user/self"
             else:
-                # 其他用户：必须在 /user/{sec_user_id} 且不能有 showTab 参数
-                target_url = f"/user/{sec_user_id}"
-                already_on_page = (target_url in current_url and
-                                   "showTab" not in current_url)
+                logger.info(f"Navigating to /user/{sec_user_id}")
+                url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
 
-            if not already_on_page:
-                # 需要导航到目标页面
-                if is_current_user:
-                    logger.info(f"Navigating to /user/self for current user: {sec_user_id}")
-                    url = f"{settings.DOUYIN_BASE_URL}/user/self"
-                else:
-                    logger.info(f"Navigating to /user/{sec_user_id}")
-                    url = f"{settings.DOUYIN_BASE_URL}/user/{sec_user_id}"
+            ok = await engine.safe_goto(page, url)
+            if not ok:
+                logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
+                return None
 
-                ok = await engine.safe_goto(page, url)
-                if not ok:
-                    logger.error(f"Failed to load user page (captcha timeout): {sec_user_id}")
-                    return None
-            else:
-                logger.info(f"Already on user page for {sec_user_id}, skipping navigation")
+            # Wait a bit for APIs to be intercepted
+            await asyncio.sleep(1)
+
+            # Check what APIs were captured before waiting
+            all_apis_before = interceptor.get_captured_urls()
+            logger.info(f"APIs captured immediately after navigation: {len(all_apis_before)} URLs")
+            for api_url in all_apis_before[:5]:  # Log first 5
+                logger.info(f"  - {api_url[:100]}")
 
             # Wait for profile API response
-            # 抖音 API 路径已更新：使用 query/user 替代 user/profile/other
-            data = await interceptor.wait_for("query/user", timeout=10)
-            if not data:
-                # 尝试旧的 API 路径（向后兼容）
-                logger.info("No data from query/user, trying user/profile/other")
-                data = await interceptor.wait_for("user/profile/other", timeout=5)
+            # 注意：必须使用精确的路径匹配，避免匹配到 /set/user/settings 等错误 API
+            # 优先级：user/profile/other > user/profile/self > query/user
+            data = await interceptor.wait_for("/user/profile/other", timeout=10)
             if not data:
                 # 尝试 self 端点（当前用户可能使用）
                 logger.info("No data from user/profile/other, trying user/profile/self")
-                data = await interceptor.wait_for("user/profile/self", timeout=5)
+                data = await interceptor.wait_for("/user/profile/self", timeout=5)
+            if not data:
+                # 最后尝试 query/user（注意：可能匹配到错误 API）
+                logger.info("No data from user/profile/self, trying query/user")
+                data = await interceptor.wait_for("query/user", timeout=5)
 
             if not data:
                 logger.warning(f"No profile data received for {sec_user_id}")
@@ -224,7 +216,8 @@ class UserScraper:
 
     async def scrape_works(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
-        on_page: Callable | None = None, existing_page: Page | None = None,
+        on_page: Callable | None = None, check_cancelled: Callable | None = None,
+        get_max_count: Callable | None = None, existing_page: Page | None = None,
     ) -> list[Work]:
         """Scrape user's works list with pagination.
 
@@ -232,8 +225,10 @@ class UserScraper:
             task_id: Unique task identifier for page management
             sec_user_id: User ID to scrape
             max_pages: Maximum number of pages to scrape (deprecated, use max_count)
-            max_count: Maximum number of works to scrape
+            max_count: Initial maximum number of works to scrape (can be overridden by get_max_count)
             on_page: Callback function(page_num, total_pages) for progress tracking
+            check_cancelled: Callback function to check if task was cancelled
+            get_max_count: Async callback function to dynamically get current max_count limit
             existing_page: Optional existing page to reuse. If None, creates a new page.
         """
         logger.info(f"Starting scrape_works for {sec_user_id}, max_pages={max_pages}, max_count={max_count}")
@@ -292,9 +287,21 @@ class UserScraper:
             if on_page:
                 on_page(page_count, effective_max)
             while has_more:
-                # Check max_count limit
-                if max_count and len(all_works) >= max_count:
-                    logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
+                # Check if task is cancelled
+                if check_cancelled and await check_cancelled():
+                    logger.info(f"Task #{task_id} was cancelled, stopping works pagination")
+                    break
+
+                # Check max_count limit (support dynamic updates via get_max_count callback)
+                current_max_count = max_count
+                if get_max_count:
+                    current_max_count = await get_max_count()
+                    if current_max_count is not None and current_max_count != max_count:
+                        logger.info(f"Max count updated from {max_count} to {current_max_count}")
+                        max_count = current_max_count
+
+                if current_max_count and len(all_works) >= current_max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {current_max_count}")
                     break
 
                 if max_pages and page_count >= max_pages:
@@ -337,8 +344,17 @@ class UserScraper:
 
                 all_works.extend(works)
                 page_count += 1
-                has_more = data.get("has_more", 0)
                 logger.info(f"Page {page_count}: got {len(works)} works (total: {len(all_works)})")
+
+                # Check max_count limit immediately after adding works
+                current_max_count = max_count
+                if get_max_count:
+                    current_max_count = await get_max_count()
+                if current_max_count and len(all_works) >= current_max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {current_max_count}")
+                    break
+
+                has_more = data.get("has_more", 0)
                 if on_page:
                     on_page(page_count, effective_max)
 
@@ -363,11 +379,18 @@ class UserScraper:
     async def scrape_likes(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None, check_cancelled: Callable | None = None,
-        existing_page: Page | None = None,
+        get_max_count: Callable | None = None, existing_page: Page | None = None,
     ) -> list[Work]:
         """Scrape current user's liked videos (喜欢) with pagination.
 
         Args:
+            task_id: Task ID for page management
+            sec_user_id: User's secure ID
+            max_pages: Maximum number of pages to scrape
+            max_count: Initial maximum number of works to scrape (can be overridden by get_max_count)
+            on_page: Callback for progress updates
+            check_cancelled: Callback to check if task was cancelled
+            get_max_count: Async callback function to dynamically get current max_count limit
             existing_page: Optional existing page to reuse. If None, creates a new page.
         """
         own_page = False
@@ -414,6 +437,11 @@ class UserScraper:
                 page_count += 1
                 logger.info(f"Likes Page {page_count}: got {len(works)} works")
 
+                # Check if task was cancelled during initial data fetch
+                if check_cancelled and await check_cancelled():
+                    logger.info(f"Task #{task_id} was cancelled after initial data fetch")
+                    return all_works  # Return what we have so far
+
             # Pagination loop
             effective_max = max_pages or 999
             # Check if there's more data
@@ -429,9 +457,12 @@ class UserScraper:
                     logger.info(f"Task #{task_id} was cancelled, stopping pagination")
                     break
 
-                # Check max_count limit before continuing
-                if max_count and len(all_works) >= max_count:
-                    logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
+                # Check max_count limit before continuing (support dynamic updates via get_max_count callback)
+                current_max_count = max_count
+                if get_max_count:
+                    current_max_count = await get_max_count()
+                if current_max_count and len(all_works) >= current_max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {current_max_count}")
                     break
 
                 # Random delay
@@ -516,6 +547,14 @@ class UserScraper:
                 all_works.extend(works)
                 page_count += 1
 
+                # Check max_count limit immediately after adding works
+                current_max_count = max_count
+                if get_max_count:
+                    current_max_count = await get_max_count()
+                if current_max_count and len(all_works) >= current_max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {current_max_count}")
+                    break
+
                 # Decide whether to continue based on data received
                 # Continue only if we got a reasonable amount of data
                 has_more = len(aweme_list) >= first_page_size * 0.5
@@ -545,11 +584,18 @@ class UserScraper:
     async def scrape_favorites(
         self, task_id: int, sec_user_id: str, max_pages: int | None = None, max_count: int | None = None,
         on_page: Callable | None = None, check_cancelled: Callable | None = None,
-        existing_page: Page | None = None,
+        get_max_count: Callable | None = None, existing_page: Page | None = None,
     ) -> list[Work]:
         """Scrape current user's favorite videos (收藏) with pagination.
 
         Args:
+            task_id: Task ID for page management
+            sec_user_id: User's secure ID
+            max_pages: Maximum number of pages to scrape
+            max_count: Initial maximum number of works to scrape (can be overridden by get_max_count)
+            on_page: Callback for progress updates
+            check_cancelled: Callback to check if task was cancelled
+            get_max_count: Async callback function to dynamically get current max_count limit
             existing_page: Optional existing page to reuse. If None, creates a new page.
         """
         own_page = False
@@ -610,9 +656,12 @@ class UserScraper:
                     logger.info(f"Task #{task_id} was cancelled, stopping pagination")
                     break
 
-                # Check max_count limit before continuing
-                if max_count and len(all_works) >= max_count:
-                    logger.info(f"Reached max_count limit: {len(all_works)} >= {max_count}")
+                # Check max_count limit before continuing (support dynamic updates via get_max_count callback)
+                current_max_count = max_count
+                if get_max_count:
+                    current_max_count = await get_max_count()
+                if current_max_count and len(all_works) >= current_max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {current_max_count}")
                     break
 
                 # Random delay
@@ -697,6 +746,14 @@ class UserScraper:
                 all_works.extend(works)
                 page_count += 1
 
+                # Check max_count limit immediately after adding works
+                current_max_count = max_count
+                if get_max_count:
+                    current_max_count = await get_max_count()
+                if current_max_count and len(all_works) >= current_max_count:
+                    logger.info(f"Reached max_count limit: {len(all_works)} >= {current_max_count}")
+                    break
+
                 # Decide whether to continue based on data received
                 # Continue only if we got a reasonable amount of data
                 has_more = len(aweme_list) >= first_page_size * 0.5
@@ -725,7 +782,7 @@ class UserScraper:
 
     async def scrape_following(
         self, task_id: int, sec_user_id: str, max_count: int | None = None,
-        on_page: Callable | None = None,
+        on_page: Callable | None = None, check_cancelled: Callable | None = None,
         existing_page: Page | None = None,
     ) -> list[dict]:
         """Scrape user's following list with pagination using API interception.
@@ -968,6 +1025,11 @@ class UserScraper:
 
             # Pagination loop - scroll to trigger more API calls
             while len(all_users) < effective_max:
+                # Check if task is cancelled
+                if check_cancelled and await check_cancelled():
+                    logger.info(f"Task #{task_id} was cancelled, stopping following pagination")
+                    break
+
                 # Random delay
                 delay = random.uniform(settings.MIN_DELAY, settings.MAX_DELAY)
                 await asyncio.sleep(delay)

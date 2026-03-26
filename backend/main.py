@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import signal
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -21,6 +23,20 @@ logging.basicConfig(
 # Attach log stream handler to root logger
 logging.getLogger().addHandler(log_stream_handler)
 logger = logging.getLogger(__name__)
+
+# Global shutdown event
+shutdown_event = asyncio.Event()
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    shutdown_event.set()
+
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 
 @asynccontextmanager
@@ -44,12 +60,28 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
+    # Shutdown - graceful cleanup
+    logger.info("Starting graceful shutdown...")
+
     if mcp_task:
         mcp_task.cancel()
+        try:
+            await mcp_task
+        except asyncio.CancelledError:
+            pass
+
+    # Stop scheduler first (no new tasks)
     await scheduler.stop()
+    logger.info("Scheduler stopped")
+
+    # Stop browser engine
     await engine.stop()
+    logger.info("Engine stopped")
+
+    # Close database with WAL checkpoint
     await db.close()
+    logger.info("Database closed")
+
     logger.info("Shutdown complete")
 
 

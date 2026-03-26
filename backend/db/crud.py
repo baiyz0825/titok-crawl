@@ -693,15 +693,15 @@ async def get_session(name: str) -> Session | None:
 
 async def upsert_comment(comment: Comment) -> int:
     await db.conn.execute(
-        """INSERT INTO comments (comment_id, aweme_id, user_nickname, user_sec_uid,
+        """INSERT INTO comments (comment_id, aweme_id, user_uid, user_nickname, user_sec_uid,
             user_avatar, content, digg_count, reply_count, reply_to, create_time, ip_label, extra_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(comment_id) DO UPDATE SET
             digg_count=excluded.digg_count,
             reply_count=excluded.reply_count,
             content=excluded.content,
             reply_to=excluded.reply_to""",
-        (comment.comment_id, comment.aweme_id, comment.user_nickname,
+        (comment.comment_id, comment.aweme_id, comment.user_uid, comment.user_nickname,
          comment.user_sec_uid, comment.user_avatar, comment.content,
          comment.digg_count, comment.reply_count, comment.reply_to, comment.create_time,
          comment.ip_label, comment.extra_data),

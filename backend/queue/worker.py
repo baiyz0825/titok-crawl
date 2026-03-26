@@ -30,6 +30,17 @@ class TaskWorker:
         task = await crud.get_task(task_id)
         return task and task.status == "cancelled"
 
+    async def _get_task_param(self, task_id: int, key: str, default=None):
+        """Get current task parameter from database (supports dynamic updates)."""
+        task = await crud.get_task(task_id)
+        if not task or not task.params:
+            return default
+        try:
+            params = json.loads(task.params)
+            return params.get(key, default)
+        except Exception:
+            return default
+
     async def _resolve_sec_user_id(self, target: str) -> str | None:
         """Resolve target (uid or sec_user_id) to sec_user_id for Douyin API.
 
@@ -117,7 +128,9 @@ class TaskWorker:
                 min(0.1 + 0.8 * page_num / max(total, 1), 0.9),
                 f"采集第 {page_num} 页",
                 f"已获取作品数据"
-            )
+            ),
+            check_cancelled=lambda: self._check_cancelled(task_id),
+            get_max_count=lambda: self._get_task_param(task_id, "max_count")
         )
 
         logger.info(f"[Task {task_id}] Scraped {len(works)} works, starting upsert to DB")
@@ -243,6 +256,8 @@ class TaskWorker:
                     f"采集作品第 {page_num} 页",
                     ""
                 ),
+                check_cancelled=lambda: self._check_cancelled(task_id),
+                get_max_count=lambda: self._get_task_param(task_id, "max_count"),
                 existing_page=page
             )
 
@@ -442,6 +457,7 @@ class TaskWorker:
                     f"已获取喜欢的视频数据"
                 ),
                 check_cancelled=lambda: self._check_cancelled(task_id),
+                get_max_count=lambda: self._get_task_param(task_id, "max_count"),
                 existing_page=page
             )
 
@@ -450,6 +466,11 @@ class TaskWorker:
             updated_count = 0
             processed_works = []
             for work in works:
+                # Check if task was cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled during works upsert, stopping")
+                    break
+
                 existing = await crud.get_work(work.aweme_id)
                 if existing:
                     updated_count += 1
@@ -460,6 +481,11 @@ class TaskWorker:
                 # Limit max count if specified
                 if max_count and len(processed_works) >= max_count:
                     break
+
+            # Check if task was cancelled before continuing
+            if await self._check_cancelled(task_id):
+                logger.info(f"[Task {task_id}] Task was cancelled, stopping further processing")
+                return {"total": len(processed_works), "new": new_count, "updated": updated_count, "cancelled": True}
 
             # Download media if requested
             download_count = 0
@@ -507,32 +533,8 @@ class TaskWorker:
                     logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
                     creators_collected = 0
                 else:
-                    progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
-
-                    for i, author_id in enumerate(authors_to_collect):
-                        # Check if task is cancelled
-                        if await self._check_cancelled(task_id):
-                            logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
-                            break
-
-                        try:
-                            progress_manager.update(
-                                task_id,
-                                0.91 + 0.04 * (i + 1) / len(authors_to_collect),
-                                f"采集作者 {i+1}/{len(authors_to_collect)}",
-                                author_id
-                            )
-                            logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
-                            # Reuse the same page for profile scraping
-                            user = await self.user_scraper.scrape_profile(task_id, author_id, page=page)
-                            if user:
-                                await crud.upsert_user(user)
-                                creators_collected += 1
-                                logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
-                            else:
-                                logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
-                        except Exception as e:
-                            logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+                    progress_manager.update(task_id, 0.91, "采集作者信息", f"准备并行采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
+                    creators_collected, _ = await self._collect_creators_parallel(task_id, authors_to_collect)
 
             # Speech recognition if requested
             transcript_count = 0
@@ -583,6 +585,8 @@ class TaskWorker:
             if creators_collected > 0:
                 extra_info += f"，采集作者 {creators_collected} 个"
 
+            # Log success
+            logger.info(f"[Task {task_id}] ✅ scrape_likes COMPLETED: {len(processed_works)} works processed (new: {new_count}, updated: {updated_count})")
             progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
             return {
                 "total": len(processed_works),
@@ -638,6 +642,11 @@ class TaskWorker:
             updated_count = 0
             processed_works = []
             for work in works:
+                # Check if task was cancelled
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task was cancelled during favorites upsert, stopping")
+                    break
+
                 existing = await crud.get_work(work.aweme_id)
                 if existing:
                     updated_count += 1
@@ -650,6 +659,11 @@ class TaskWorker:
                 # Limit max count if specified
                 if max_count and len(processed_works) >= max_count:
                     break
+
+            # Check if task was cancelled before continuing
+            if await self._check_cancelled(task_id):
+                logger.info(f"[Task {task_id}] Task was cancelled, stopping further processing")
+                return {"total": len(processed_works), "new": new_count, "updated": updated_count, "cancelled": True}
 
             # Download media if requested
             download_count = 0
@@ -697,32 +711,8 @@ class TaskWorker:
                     logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
                     creators_collected = 0
                 else:
-                    progress_manager.update(task_id, 0.91, "采集作者信息", f"准备采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
-
-                    for i, author_id in enumerate(authors_to_collect):
-                        # Check if task is cancelled
-                        if await self._check_cancelled(task_id):
-                            logger.info(f"[Task {task_id}] Task was cancelled, stopping creator collection")
-                            break
-
-                        try:
-                            progress_manager.update(
-                                task_id,
-                                0.91 + 0.04 * (i + 1) / len(authors_to_collect),
-                                f"采集作者 {i+1}/{len(authors_to_collect)}",
-                                author_id
-                            )
-                            logger.info(f"[Task {task_id}] Scraping profile for creator {i+1}/{len(authors_to_collect)}: {author_id}")
-                            # Reuse the same page for profile scraping
-                            user = await self.user_scraper.scrape_profile(task_id, author_id, page=page)
-                            if user:
-                                await crud.upsert_user(user)
-                                creators_collected += 1
-                                logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
-                            else:
-                                logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
-                        except Exception as e:
-                            logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+                    progress_manager.update(task_id, 0.91, "采集作者信息", f"准备并行采集 {len(authors_to_collect)} 个作者信息（已跳过 {creators_skipped} 个）")
+                    creators_collected, _ = await self._collect_creators_parallel(task_id, authors_to_collect)
 
             # Speech recognition if requested
             transcript_count = 0
@@ -773,6 +763,8 @@ class TaskWorker:
             if creators_collected > 0:
                 extra_info += f"，采集作者 {creators_collected} 个"
 
+            # Log success
+            logger.info(f"[Task {task_id}] ✅ scrape_favorites COMPLETED: {len(processed_works)} works processed (new: {new_count}, updated: {updated_count})")
             progress_manager.update(task_id, 1.0, "完成", f"共处理 {len(processed_works)} 个作品")
             return {
                 "total": len(processed_works),
@@ -793,7 +785,12 @@ class TaskWorker:
             logger.info(f"[Task {task_id}] Released page for _scrape_favorites")
 
     async def _scrape_following(self, task_id: int, sec_user_id: str, params: dict) -> dict:
-        """Scrape user's following list with optional recursive collection."""
+        """Scrape user's following list with optional recursive collection.
+
+        支持并行采集用户资料：
+        1. 先递归收集所有关注列表中的用户 ID
+        2. 然后使用子页面并行采集用户资料
+        """
         from backend.scraper.engine import engine
 
         max_count = params.get("max_count")
@@ -804,7 +801,7 @@ class TaskWorker:
         logger.info(f"[Task {task_id}] Starting scrape_following for {sec_user_id}, max_count={max_count}, collect_profile={collect_profile}, recursive={recursive}, depth={recursive_depth}")
         progress_manager.update(task_id, 0.05, "开始采集关注列表", f"用户 {sec_user_id[:20]}...")
 
-        # Use a set to track processed users and avoid duplicates
+        # 使用 set 跟踪已处理的用户，避免重复
         processed_users = set()
         all_users_data = []
 
@@ -813,60 +810,95 @@ class TaskWorker:
         logger.debug(f"Acquired page for task {task_id}")
 
         try:
-            # Recursive collection function
-            async def collect_following_recursive(target_id: str, current_depth: int):
+            # 用于跟踪是否达到限制
+            reached_limit = False
+
+            # 第一步：递归收集所有关注列表（不采集资料）
+            async def collect_following_ids_recursive(target_id: str, current_depth: int):
+                """递归收集关注列表中的用户 ID，不采集详细资料"""
+                nonlocal reached_limit
+
+                if reached_limit:
+                    return
+
                 if current_depth > recursive_depth:
                     return
 
                 if target_id in processed_users:
                     return
 
-                processed_users.add(target_id)
-                progress_manager.update(task_id, 0.1, f"采集关注列表 (深度 {current_depth}/{recursive_depth})", f"已处理 {len(processed_users)} 个用户")
+                if await self._check_cancelled(task_id):
+                    logger.info(f"[Task {task_id}] Task cancelled during following collection")
+                    return
 
-                # Get following list for this user, 复用已有页面
-                following_users = await self.user_scraper.scrape_following(
-                    task_id, target_id, max_count=None,
-                    on_page=None, existing_page=page
+                processed_users.add(target_id)
+                progress_manager.update(
+                    task_id,
+                    0.05 + 0.4 * (current_depth / max(recursive_depth, 1)),
+                    f"采集关注列表 (深度 {current_depth}/{recursive_depth})",
+                    f"已发现 {len(all_users_data)} 个用户" + (f" / {max_count}" if max_count else "")
                 )
 
-                logger.info(f"[Task {task_id}] Found {len(following_users)} following for {target_id[:20]}...")
+                # 计算剩余需要采集的数量
+                remaining = max_count - len(all_users_data) if max_count else None
+
+                # 获取关注列表，复用已有页面
+                following_users = await self.user_scraper.scrape_following(
+                    task_id, target_id, max_count=remaining,
+                    on_page=None, check_cancelled=lambda: self._check_cancelled(task_id), existing_page=page
+                )
+
+                logger.info(f"[Task {task_id}] Found {len(following_users)} following for {target_id[:20]}... (total: {len(all_users_data)})")
 
                 for user_info in following_users:
+                    # 检查是否达到限制
+                    if max_count and len(all_users_data) >= max_count:
+                        logger.info(f"[Task {task_id}] Reached max_count limit: {len(all_users_data)} >= {max_count}")
+                        reached_limit = True
+                        break
+
                     following_id = user_info["sec_user_id"]
+                    all_users_data.append(user_info)
 
-                    # Collect profile if requested
-                    if collect_profile and following_id not in processed_users:
-                        try:
-                            progress_manager.update(task_id, 0.1, f"采集用户资料 ({len(all_users_data)})", user_info["nickname"] or following_id[:20])
-                            # 复用已有页面, 不创建新页面
-                            user = await self.user_scraper.scrape_profile(task_id, following_id, page=page)
-                            if user:
-                                await crud.upsert_user(user)
-                                all_users_data.append(user_info)
-                                logger.info(f"[Task {task_id}] Saved profile for {user.nickname} ({following_id[:20]}...)")
-                        except Exception as e:
-                            logger.warning(f"[Task {task_id}] Failed to scrape profile for {following_id[:20]}: {e}")
-                            all_users_data.append(user_info)  # Add basic info even if profile scrape fails
-                    else:
-                        all_users_data.append(user_info)
+                    # 递归收集（深度优先），但不要递归如果已达到限制
+                    if recursive and current_depth < recursive_depth and not reached_limit:
+                        await collect_following_ids_recursive(following_id, current_depth + 1)
 
-                    # Recursive collection
-                    if recursive and current_depth < recursive_depth:
-                        await collect_following_recursive(following_id, current_depth + 1)
+            # 开始收集关注列表
+            await collect_following_ids_recursive(sec_user_id, 1)
 
-            # Start collection
-            await collect_following_recursive(sec_user_id, 1)
+            logger.info(f"[Task {task_id}] Collected {len(all_users_data)} following users from {len(processed_users)} unique accounts")
+
+            # 第二步：如果需要采集资料，使用子页面并行采集
+            creators_collected = 0
+            creators_skipped = 0
+            if collect_profile and all_users_data:
+                # 去重获取需要采集的用户 ID
+                unique_author_ids = list(set(u["sec_user_id"] for u in all_users_data if u.get("sec_user_id")))
+                logger.info(f"[Task {task_id}] Starting parallel profile collection for {len(unique_author_ids)} unique users")
+
+                progress_manager.update(
+                    task_id, 0.5,
+                    "并行采集用户资料",
+                    f"准备采集 {len(unique_author_ids)} 个用户"
+                )
+
+                creators_collected, creators_skipped = await self._collect_creators_parallel(task_id, unique_author_ids)
 
             progress_manager.update(task_id, 0.95, "保存数据", f"共采集 {len(all_users_data)} 个关注用户")
-            progress_manager.update(task_id, 1.0, "完成", f"共采集 {len(all_users_data)} 个用户，深度 {recursive_depth}")
+            progress_manager.update(
+                task_id, 1.0, "完成",
+                f"共采集 {len(all_users_data)} 个用户" + (f"，资料 {creators_collected} 个" if creators_collected > 0 else "")
+            )
 
-            logger.info(f"[Task {task_id}] Completed: {len(all_users_data)} users collected, {len(processed_users)} unique users processed")
+            logger.info(f"[Task {task_id}] Completed: {len(all_users_data)} users collected, {len(processed_users)} unique accounts, {creators_collected} profiles scraped")
 
             return {
                 "total": len(all_users_data),
                 "unique": len(processed_users),
                 "collect_profile": collect_profile,
+                "profiles_collected": creators_collected,
+                "profiles_skipped": creators_skipped,
                 "recursive": recursive,
                 "depth": recursive_depth,
             }
@@ -1036,3 +1068,90 @@ class TaskWorker:
         tasks = [refresh_one(w, i) for i, w in enumerate(works)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return sum(1 for r in results if r == 1)
+
+    async def _collect_creators_parallel(
+        self,
+        task_id: int,
+        author_ids: list[str],
+        max_concurrent: int | None = None
+    ) -> tuple[int, int]:
+        """并行采集作者信息（使用子页面）
+
+        Args:
+            task_id: 任务 ID
+            author_ids: 作者 sec_user_id 列表
+            max_concurrent: 最大并发数，默认使用 settings.MAX_CONCURRENT_DOWNLOADS
+
+        Returns:
+            (成功采集数量, 跳过数量)
+        """
+        from backend.scraper.engine import engine
+        from datetime import datetime, timedelta
+
+        if max_concurrent is None:
+            max_concurrent = settings.MAX_CONCURRENT_DOWNLOADS
+
+        # Filter out authors that already exist in database (recently updated)
+        # Skip collection if user was updated within the last 7 days
+        recent_cutoff = datetime.now() - timedelta(days=7)
+
+        authors_to_collect = []
+        creators_skipped = 0
+
+        for author_id in author_ids:
+            existing_user = await crud.get_user(author_id)
+            if existing_user and existing_user.updated_at:
+                if existing_user.updated_at > recent_cutoff:
+                    logger.info(f"[Task {task_id}] ⊘ Skipping {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                    creators_skipped += 1
+                else:
+                    logger.info(f"[Task {task_id}] → Need update {author_id} (updated {existing_user.updated_at.strftime('%Y-%m-%d')})")
+                    authors_to_collect.append(author_id)
+            else:
+                authors_to_collect.append(author_id)
+
+        logger.info(f"[Task {task_id}] Will collect {len(authors_to_collect)} creators, skipped {creators_skipped} recent ones")
+
+        if not authors_to_collect:
+            logger.info(f"[Task {task_id}] All creators already up-to-date, skipping collection")
+            return 0, creators_skipped
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+        creators_collected = 0
+
+        async def collect_one(author_id: str, index: int):
+            nonlocal creators_collected
+            async with semaphore:
+                if await self._check_cancelled(task_id):
+                    return 0
+
+                progress_manager.update(
+                    task_id,
+                    0.91 + 0.04 * (index + 1) / len(authors_to_collect),
+                    f"采集作者 {index+1}/{len(authors_to_collect)}",
+                    author_id
+                )
+
+                # 获取子页面用于并行采集
+                subpage_id, page = await engine.acquire_subpage(task_id)
+                try:
+                    logger.info(f"[Task {task_id}] Scraping profile for creator {index+1}/{len(authors_to_collect)}: {author_id}")
+                    user = await self.user_scraper.scrape_profile(task_id, author_id, page=page)
+                    if user:
+                        await crud.upsert_user(user)
+                        logger.info(f"[Task {task_id}] ✅ Collected creator: {user.nickname or author_id}")
+                        return 1
+                    else:
+                        logger.warning(f"[Task {task_id}] ⚠️ No user data returned for {author_id}")
+                        return 0
+                except Exception as e:
+                    logger.warning(f"[Task {task_id}] Failed to collect creator {author_id}: {e}")
+                    return 0
+                finally:
+                    await engine.release_subpage(task_id, subpage_id)
+
+        tasks = [collect_one(aid, i) for i, aid in enumerate(authors_to_collect)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        creators_collected = sum(1 for r in results if r == 1)
+
+        return creators_collected, creators_skipped
