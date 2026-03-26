@@ -1,393 +1,632 @@
-# 抖音数据采集器 - 使用文档
+# 🎬 抖音数据采集器
 
-基于 Playwright 的抖音数据采集工具，提供 Web 管理界面和 MCP Server 接口。
+<div align="center">
 
-## 目录
+基于 Playwright 的抖音数据采集与分析平台
 
-- [快速开始](#快速开始)
-- [功能概览](#功能概览)
-- [页面说明](#页面说明)
-- [MCP Server](#mcp-server)
-- [部署](#部署)
-- [常见问题](#常见问题)
-- [技术架构](#技术架构)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-teal.svg)](https://fastapi.tiangolo.com/)
+[![Playwright](https://img.shields.io/badge/Playwright-1.40+-orange.svg)](https://playwright.dev/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [文档](#-文档) • [部署](#-部署) • [开发](#-开发指南)
+
+</div>
 
 ---
 
-## 快速开始
+## 📖 项目简介
+
+**抖音数据采集器** 是一个功能完整的数据采集与分析平台，专为抖音平台设计。通过浏览器自动化技术，实现对用户、作品、评论等数据的采集，并提供直观的 Web 管理界面和 MCP (Model Context Protocol) 服务接口。
+
+### 🎯 核心能力
+
+- **用户数据采集** - 采集用户资料、粉丝数据、作品列表
+- **作品数据采集** - 采集视频/图文作品的详细信息、互动数据
+- **评论数据采集** - 支持完整评论树的采集，包括所有子回复
+- **媒体文件下载** - 下载视频文件、封面图、图文图片到本地
+- **语音识别** - 视频语音自动转文字（基于 faster-whisper）
+- **智能搜索** - 本地优先搜索，减少不必要的网络请求
+- **定时任务** - 配置自动定期同步用户数据
+- **MCP 服务** - 提供 AI 客户端可直接调用的工具接口
+
+### ✨ 技术亮点
+
+- 🛡️ **19项反检测措施** - 浏览器指纹伪装、请求延迟、验证码自动检测
+- 📊 **完整的数据流** - 从采集到存储到展示的完整链路
+- 🔄 **异步任务队列** - 支持优先级、暂停、重试的任务管理
+- 🌐 **双接口设计** - REST API + MCP Server，满足不同场景
+- 📱 **响应式设计** - 支持桌面端和移动端的 Web 界面
+- 🔒 **数据安全** - 本地 SQLite 存储，数据完全自主可控
+
+---
+
+## 🏗️ 系统架构
+
+```mermaid
+graph TB
+    subgraph "前端层"
+        A[Vue 3 + Element Plus]
+        A1[用户管理]
+        A2[作品列表]
+        A3[任务队列]
+        A4[预览播放]
+    end
+
+    subgraph "后端服务层"
+        B[FastAPI 服务 :8000]
+        B1[REST API]
+        B2[WebSocket/SSE]
+        B3[任务调度器]
+    end
+
+    subgraph "采集引擎层"
+        C[Playwright 浏览器]
+        C1[反检测模块]
+        C2[API拦截]
+        C3[验证码处理]
+    end
+
+    subgraph "数据存储层"
+        D[(SQLite 数据库)]
+        D1[用户表]
+        D2[作品表]
+        D3[评论表]
+        D4[任务表]
+    end
+
+    subgraph "MCP服务层"
+        E[MCP Server :8001]
+        E1[采集工具]
+        E2[查询工具]
+        E3[分析工具]
+    end
+
+    subgraph "外部服务"
+        F[抖音 Web]
+        G[AI 客户端<br/>Claude/Cursor]
+    end
+
+    A -->|HTTP/WS| B
+    B -->|调用| C
+    C -->|拦截API| F
+    B -->|存储| D
+    E -->|查询| D
+    E -->|SSE| G
+    B3 -->|管理| C
+
+    style A fill:#42b983
+    style B fill:#009688
+    style C fill:#ff9800
+    style D fill:#2196f3
+    style E fill:#9c27b0
+```
+
+---
+
+## 🚀 功能特性
+
+### 📊 数据采集能力
+
+| 功能类型 | 采集内容 | 支持范围 |
+|---------|---------|---------|
+| **用户资料** | 昵称、头像、粉丝数、关注数、获赞数、抖音号 | 全量采集 |
+| **作品列表** | 视频/图文作品、标题、封面、发布时间、互动数据 | 分页采集 |
+| **评论数据** | 评论内容、用户信息、点赞数、回复树结构 | 完整评论树 |
+| **媒体文件** | 视频文件、封面图、图文图片 | 本地下载 |
+| **语音识别** | 视频语音转文字 | faster-whisper |
+
+### 🎨 Web 管理界面
+
+#### 核心页面
+
+1. **系统概览 (Dashboard)**
+   - 全局统计数据（用户数、作品数、评论数、媒体数）
+   - 任务状态分布可视化
+   - 登录状态与验证码状态监控
+
+2. **用户管理 (Users)**
+   - 用户搜索与采集
+   - 用户列表管理（搜索、详情、更新、删除）
+   - 批量操作支持
+
+3. **作品列表 (Works)**
+   - 多维度筛选（用户、类型、时间范围）
+   - 作品详情查看（视频播放、图文轮播）
+   - 评论树展示
+   - 批量重新采集
+
+4. **预览播放 (Preview)**
+   - 🆕 **双模式切换**：单用户模式 / 全局 Feed 模式
+   - 🆕 **音频控制**：音量切换按钮
+   - 仿抖音垂直滚动体验
+   - 互动功能（点赞、收藏、评论）
+
+5. **任务队列 (Tasks)**
+   - 实时任务状态监控
+   - 任务优先级调整
+   - 暂停/恢复/取消操作
+   - 批量管理
+
+6. **定时任务 (Schedules)**
+   - 自动定期同步用户数据
+   - 灵活的执行间隔配置
+   - 启用/禁用控制
+
+7. **服务器日志 (Logs)**
+   - 实时日志流（SSE）
+   - 日志级别筛选
+   - 历史日志加载
+
+8. **登录管理 (Sessions)**
+   - 扫码登录
+   - Cookie 自动保存
+   - 登录状态监控
+
+### 🔌 MCP 服务接口
+
+MCP Server 提供 8 个工具接口，支持 AI 客户端直接调用：
+
+```mermaid
+graph LR
+    A[AI 客户端<br/>Claude/Cursor] -->|SSE| B[MCP Server]
+    B --> C{工具类型}
+
+    C -->|采集类| D1[scrape_user<br/>采集用户]
+    C -->|采集类| D2[scrape_user_works<br/>采集作品]
+    C -->|采集类| D3[search_users<br/>搜索用户]
+
+    C -->|查询类| E1[get_user_info<br/>查询用户信息]
+    C -->|查询类| E2[get_works<br/>查询作品列表]
+    C -->|查询类| E3[lookup_user<br/>本地查找用户]
+    C -->|查询类| E4[get_task_status<br/>查询任务状态]
+
+    C -->|分析类| F1[analyze_user<br/>分析用户数据]
+
+    style A fill:#9c27b0
+    style B fill:#ff9800
+```
+
+#### MCP 工具详细说明
+
+| 工具名称 | 功能 | 关键参数 |
+|---------|------|---------|
+| `scrape_user` | 采集用户数据 | `identifier` (sec_user_id/douyin_id/nickname), `sync_type` (all/profile/works) |
+| `scrape_user_works` | 采集用户作品 | `sec_user_id`, `max_pages` |
+| `search_users` | 搜索抖音用户 | `keyword` |
+| `get_user_info` | 查询用户信息 | `user_id` (支持 uid 或 sec_user_id) |
+| `get_works` | 查询作品列表 | `uid`, `type`, `sort_by`, `has_media`, `has_comments` 等 |
+| `lookup_user` | 本地查找用户 | `keyword` |
+| `get_task_status` | 查询任务状态 | `task_id` |
+| `analyze_user` | 分析用户数据 | `sec_user_id` |
+
+---
+
+## 📦 安装与部署
 
 ### 环境要求
 
-- Python 3.11+
-- Node.js 18+
-- macOS / Linux
-- ffmpeg（语音识别需要，macOS: `brew install ffmpeg`）
+- **Python**: 3.11+
+- **Node.js**: 18+
+- **操作系统**: macOS / Linux
+- **可选**: ffmpeg（语音识别需要，macOS: `brew install ffmpeg`）
 
-### 安装
+### 快速开始
+
+#### 1. 克隆项目
 
 ```bash
-# 克隆项目后进入目录
-cd tiktok
+git clone <repository-url>
+cd titok-crawl
+```
 
-# 创建虚拟环境并安装依赖
+#### 2. 安装依赖
+
+```bash
+# 创建并激活虚拟环境
 python3 -m venv .venv
 source .venv/bin/activate
+
+# 安装 Python 依赖
 pip install -r requirements.txt
+
+# 安装 Playwright 浏览器
 playwright install chromium
 
 # 安装前端依赖
 cd frontend && npm install && cd ..
 ```
 
-### 一键启动
+#### 3. 启动服务
+
+**一键启动（推荐）:**
 
 ```bash
-./run.sh              # 正常模式
+./run.sh              # 正常模式（带 GUI 浏览器）
 ./run.sh --headless   # 无头模式（服务器部署）
 ```
 
-> Docker 部署和更多启动选项见 [部署](#部署) 章节。
-
-启动后访问：
-
-| 服务 | 地址 |
-|------|------|
-| Web 管理界面 | http://localhost:8000（或 dev 模式 http://localhost:5173） |
-| Datasette 数据库浏览 | http://localhost:8002 |
-| API 文档 | http://localhost:8000/docs |
-| MCP SSE | http://localhost:8001/sse |
-
-### 手动启动
+**手动启动:**
 
 ```bash
-# 启动后端
+# 终端1: 启动后端
 source .venv/bin/activate
 python -m backend.main
 
-# 另开终端，启动前端
+# 终端2: 启动前端
 cd frontend && npm run dev
 ```
 
-### 首次使用
+#### 4. 访问服务
 
-1. 打开 http://localhost:5173
-2. 进入「登录管理」页面
-3. 点击「扫码登录」，在弹出的浏览器窗口中用抖音 App 扫码
-4. 登录成功后即可开始采集
-
----
-
-## 功能概览
-
-| 功能 | 说明 |
-|------|------|
-| 用户采集 | 通过用户名/抖音号/sec_user_id 采集用户资料 |
-| 作品采集 | 采集用户的视频/图文作品列表及互动数据 |
-| 评论采集 | 采集指定作品的评论数据，支持回复评论翻页采集 |
-| 媒体下载 | 下载视频文件、封面图、图文图片到本地 |
-| 语音识别 | 视频下载后自动识别语音转文字，支持手动触发 |
-| 搜索发现 | 从抖音搜索用户，支持本地优先匹配 |
-| 定时任务 | 配置自动定期同步用户数据 |
-| 任务队列 | 异步任务管理，支持优先级/暂停/重试 |
-| 反检测 | 19 项浏览器指纹伪装，验证码自动检测与手动处理 |
-| 历史日志 | 日志持久化到文件，支持重启后加载历史记录 |
-
----
-
-## 页面说明
-
-### 系统概览（Dashboard）
-
-展示全局统计数据：
-- 用户总数、作品总数、评论总数、媒体文件数
-- 任务状态分布（等待/运行/完成/失败）
-- 登录状态与验证码状态
-
-### 搜索用户（Search）
-
-搜索并发现新用户：
-1. 输入用户名关键词
-2. 系统优先搜索本地已采集的用户
-3. 本地无结果时自动搜索抖音平台
-4. 从搜索结果中可直接发起采集任务
-
-### 用户管理（Users）
-
-管理已采集的用户数据。
-
-**采集用户：**
-- 在顶部输入框输入用户名、抖音号或 sec_user_id
-- 点击「采集资料」提交采集任务
-- 系统会自动识别输入类型（sec_user_id 直接使用，其他会先搜索匹配）
-
-**用户列表：**
-- 支持关键词搜索（用户名/抖音号）
-- 多选后可批量删除
-- 每个用户可操作：
-  - **详情**：弹窗查看用户资料、粉丝/关注/获赞数据、采集数据概览（作品/评论/媒体数量）
-  - **更新资料**：重新从抖音获取最新用户信息（昵称、头像、粉丝数等）
-  - **删除**：可选仅删除用户记录或级联删除所有关联数据
-
-> 用户页面只负责用户资料的采集和管理。如需采集作品、评论、媒体等数据，请在「任务管理」中提交对应任务，或在「作品列表」中对单个作品操作。
-
-### 作品列表（Works）
-
-浏览和管理已采集的作品数据。
-
-**列表功能：**
-- 按用户筛选、按类型筛选（视频/图文）
-- 多维度排序（发布时间、点赞、播放、评论、收藏）
-- 点击行查看作品详情
-- 多选批量删除
-
-**作品详情弹窗：**
-- 视频播放（需已下载到本地）或封面图展示
-- 图文类型支持轮播查看
-- 作品简介
-- 互动数据：点赞、评论、分享、收藏、播放
-- 语音文案：视频类型作品支持识别语音转文字，已识别的文案可折叠展开查看，未识别的可点击「识别文案」手动触发
-- 采集状态：显示作品信息/评论/媒体各项的采集状况
-- 评论列表：展示已采集的评论内容（支持完整的评论树结构，包括所有子回复）
-
-**重新采集（多选）：**
-
-点击「重新采集」会弹出状态弹窗，显示当前各项数据的采集状况后可勾选：
-- **更新作品信息** — 重新获取简介、点赞、播放、收藏等互动数据
-- **采集评论数据** — 采集该作品的评论
-- **下载媒体文件** — 下载封面图/视频文件/图文图片
-
-可同时勾选多项，一次提交多个采集任务。
-
-### 任务队列（Tasks）
-
-管理所有采集任务。
-
-**任务状态：** 等待中 → 运行中 → 已完成/失败
-
-**操作：**
-- 按状态筛选任务
-- 运行中的任务显示实时进度
-- 暂停/恢复/取消运行中的任务
-- 调整等待中任务的优先级
-- 批量删除已完成或失败的任务
-
-**任务类型说明：**
-
-| 类型 | 说明 |
-|------|------|
-| user_profile | 采集用户资料 |
-| user_works | 采集用户作品列表 |
-| user_all | 全量采集（资料+作品） |
-| comments | 采集指定作品的评论 |
-| media_download | 下载指定作品的媒体文件 |
-| work_info | 刷新指定作品的互动数据 |
-| speech_recognition | 识别视频语音转文字 |
-| search | 搜索用户/作品 |
-
-### 定时任务（Schedules）
-
-配置自动定期同步任务。
-
-**添加定时任务：**
-1. 从下拉框搜索并选择已采集的用户（支持用户名/抖音号搜索）
-2. 选择同步类型：全部（资料+作品）/ 仅资料 / 仅作品
-3. 设置执行间隔（默认 1440 分钟 = 24 小时，最小 10 分钟）
-4. 点击添加
-
-**任务管理：**
-- 开关控制启用/禁用
-- 查看上次/下次执行时间
-- 删除不需要的定时任务
-
-### 服务器日志（Logs）
-
-实时查看后端运行日志，便于排查问题。
-- 日志通过 SSE 实时推送
-- 支持按级别筛选（INFO/WARNING/ERROR/DEBUG）
-- 支持暂停/继续、清除日志
-- 点击「历史日志」可加载服务重启前的历史记录（日志持久化至 `data/logs/app.jsonl`）
-
-### 登录管理（Sessions）
-
-管理抖音账号的登录状态。
-
-- 显示当前登录状态（已登录/未登录）
-- 点击「扫码登录」会在 Playwright 控制的浏览器中打开抖音登录页
-- 用抖音 App 扫码完成登录
-- Cookie 自动保存，下次启动无需重新登录
-- 如遇登录过期，点击「重新登录」
-
----
-
-## MCP Server
-
-项目内置 MCP（Model Context Protocol）服务，通过 SSE 协议提供 7 个工具，供 AI 客户端（如 Claude Desktop、Cursor 等）调用。
-
-### 连接方式
-
-| 场景 | 端点 |
-|------|------|
-| 本地开发 | `http://localhost:8001/sse` |
-| Docker 部署（Nginx 代理） | `http://your-server/mcp/` |
-
-**Claude Desktop 配置示例（`claude_desktop_config.json`）：**
-
-```json
-{
-  "mcpServers": {
-    "douyin-scraper": {
-      "url": "http://localhost:8001/sse"
-    }
-  }
-}
-```
-
-### 可用工具
-
-#### 采集类（提交后台任务）
-
-| 工具 | 参数 | 说明 |
+| 服务 | 地址 | 说明 |
 |------|------|------|
-| `scrape_user` | `sec_user_id: str` | 采集用户资料 |
-| `scrape_user_works` | `sec_user_id: str, max_pages: int = 5` | 采集用户作品列表 |
-| `search_users` | `keyword: str` | 搜索抖音用户 |
+| **Web 管理界面** | http://localhost:5173 | Vue 开发服务器 |
+| **后端 API** | http://localhost:8000 | FastAPI 服务 |
+| **API 文档** | http://localhost:8000/docs | Swagger UI |
+| **MCP SSE** | http://localhost:8001/sse | MCP 服务端点 |
+| **数据库浏览** | http://localhost:8002 | Datasette |
 
-返回 `{task_id, status: "pending"}`，可通过 `get_task_status` 查询进度。
-
-#### 查询类（读取数据库）
-
-| 工具 | 参数 | 说明 |
-|------|------|------|
-| `lookup_user` | `keyword: str` | 按昵称或抖音号查找用户，返回匹配用户的 sec_user_id 等信息 |
-| `get_user_info` | `sec_user_id: str` | 查询已存储的用户详细信息 |
-| `get_works` | `sec_user_id?, work_type?, page?, size?` | 查询作品列表，支持分页和筛选 |
-| `get_task_status` | `task_id: int` | 查询任务执行状态和进度 |
-
-#### 分析类
-
-| 工具 | 参数 | 说明 |
-|------|------|------|
-| `analyze_user` | `sec_user_id: str` | 分析用户数据（互动统计、发布频率、视频/图文比例等） |
-
-### 使用示例
-
-通过 AI 客户端自然语言调用：
-
-- "帮我查一下用户名叫 xxx 的抖音号是多少"（→ `lookup_user`）
-- "帮我采集抖音用户 MS4wLjABAAAA... 的资料和作品"
-- "查看这个用户有多少个视频作品"
-- "分析一下这个用户的数据表现"
-- "搜索抖音上叫 xxx 的用户"
-
----
-
-## 部署
-
-### Docker 部署（推荐）
+### Docker 部署
 
 ```bash
+# 一键启动所有服务
 docker-compose up -d
+
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
 ```
 
-Nginx 统一入口，单端口 80 访问所有服务：
+**Docker 部署特点:**
+- Nginx 统一入口（单端口 80）
+- 自动构建前端静态文件
+- 数据持久化到 `./data` 目录
 
 | 路径 | 服务 |
 |------|------|
 | `/` | 前端 Web 界面 |
 | `/api/` | 后端 FastAPI |
-| `/datasette/` | 数据库浏览器 |
 | `/docs` | API 文档 |
-| `/media/` | 媒体文件 |
 | `/mcp/` | MCP SSE |
-
-### 本地启动
-
-```bash
-./run.sh              # 正常模式（GUI 浏览器 + 前端 dev server）
-./run.sh --headless   # 无头模式（无桌面环境服务器）
-./run.sh --no-frontend # 不启动前端 dev server（使用已构建的 dist）
-./run.sh --help       # 查看帮助
-```
-
-| 服务 | 端口 |
-|------|------|
-| 后端 API | http://localhost:8000 |
-| 前端 Dev | http://localhost:5173 |
-| Datasette | http://localhost:8002 |
-| MCP SSE | http://localhost:8001/sse |
-| API 文档 | http://localhost:8000/docs |
+| `/media/` | 媒体文件 |
+| `/datasette/` | 数据库浏览 |
 
 ---
 
-## 常见问题
+## 📚 核心功能详解
 
-### 出现验证码怎么办？
+### 用户采集流程
 
-抖音有反爬机制，采集过程中可能出现滑块验证码。系统会自动检测验证码并暂停采集，需要手动在弹出的浏览器窗口完成验证，之后采集会自动继续。
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant W as Web界面
+    participant A as API服务
+    participant Q as 任务队列
+    participant P as Playwright
+    participant D as 数据库
 
-Dashboard 页面会显示当前是否处于验证码状态。
+    U->>W: 输入用户标识
+    W->>A: POST /api/users/scrape
+    A->>D: 查询本地用户
+    alt 本地存在
+        D-->>A: 返回用户信息
+    else 本地不存在
+        A->>P: 搜索抖音
+        P->>A: 返回搜索结果
+    end
+    A->>Q: 创建采集任务
+    Q->>P: 执行采集
+    P->>D: 保存用户数据
+    D-->>Q: 任务完成
+    Q-->>W: 更新任务状态
+    W-->>U: 显示完成
+```
 
-### 为什么浏览器不是无头模式？
+### 作品采集流程
 
-默认 `HEADLESS = False`（在 `backend/config.py` 中配置），这是为了：
-1. 方便手动处理验证码
-2. 方便扫码登录
-3. 开发调试时可观察采集过程
+```mermaid
+sequenceDiagram
+    participant Q as 任务队列
+    participant P as Playwright
+    participant D as 抖音服务器
+    participant DB as 数据库
+    participant M as 媒体存储
 
-生产环境中如不需要手动干预，可改为 `HEADLESS = True`。
+    Q->>P: 启动作品采集任务
+    P->>D: 访问用户主页
+    D-->>P: 返回页面
+    loop 分页采集
+        P->>D: 滚动加载更多
+        D-->>P: API响应(作品列表)
+        P->>P: 拦截并解析API
+        P->>DB: 保存作品信息
+        alt 需要下载媒体
+            P->>D: 请求媒体文件
+            D-->>P: 返回文件流
+            P->>M: 保存到本地
+        end
+    end
+    P-->>Q: 任务完成
+```
 
-### 采集速度慢？
+### REST API 接口
 
-为避免触发反爬，每次请求之间有 3~6 秒随机延迟（`MIN_DELAY` / `MAX_DELAY`），且任务串行执行。可在 `backend/config.py` 中调整，但过快会增加被封风险。
+#### 用户相关
 
-### 数据存储在哪？
+```http
+# 采集用户
+POST /api/users/scrape
+Content-Type: application/json
+
+{
+  "identifier": "用户名/抖音号/sec_user_id",
+  "sync_type": "all"  # all/profile/works
+}
+
+# 获取用户列表
+GET /api/users?page=1&size=20&keyword=xxx
+
+# 获取用户详情
+GET /api/users/{user_id}  # 支持 uid 或 sec_user_id
+
+# 删除用户
+DELETE /api/users/{user_id}?cascade=false
+```
+
+#### 作品相关
+
+```http
+# 获取作品列表
+GET /api/workds?uid=xxx&type=video&page=1&size=20&sort_by=publish_time&sort_order=DESC
+
+# 获取作品详情
+GET /api/works/{aweme_id}
+
+# 重新采集作品
+POST /api/works/{aweme_id}/rescrape
+Content-Type: application/json
+
+{
+  "sync_types": ["comments", "media"]
+}
+```
+
+#### 任务相关
+
+```http
+# 获取任务列表
+GET /api/tasks?status=running&page=1&size=20
+
+# 暂停任务
+POST /api/tasks/{task_id}/pause
+
+# 恢复任务
+POST /api/tasks/{task_id}/resume
+
+# 取消任务
+DELETE /api/tasks/{task_id}
+```
+
+---
+
+## 🛠️ 开发指南
+
+### 项目结构
 
 ```
+titok-crawl/
+├── backend/                 # 后端代码
+│   ├── api/                # REST API 路由
+│   │   ├── users.py       # 用户接口
+│   │   ├── works.py       # 作品接口
+│   │   ├── tasks.py       # 任务接口
+│   │   └── ...
+│   ├── db/                 # 数据库层
+│   │   ├── database.py    # 数据库连接
+│   │   ├── crud.py        # CRUD 操作
+│   │   └── models.py      # 数据模型
+│   ├── scraper/            # 采集引擎
+│   │   ├── engine.py      # Playwright 引擎
+│   │   ├── user_scraper.py
+│   │   ├── work_scraper.py
+│   │   └── ...
+│   ├── queue/              # 任务队列
+│   │   ├── scheduler.py   # 任务调度器
+│   │   └── task_types.py  # 任务类型定义
+│   ├── mcp/                # MCP 服务
+│   │   └── server.py      # MCP Server 实现
+│   ├── analysis/           # 数据分析
+│   │   └── analyzer.py    # 用户数据分析
+│   ├── config.py          # 配置管理
+│   └── main.py            # 应用入口
+├── frontend/               # 前端代码
+│   ├── src/
+│   │   ├── views/         # 页面组件
+│   │   │   ├── Dashboard.vue
+│   │   │   ├── Users.vue
+│   │   │   ├── Works.vue
+│   │   │   ├── Preview.vue  # 🆕 预览播放页
+│   │   │   └── ...
+│   │   ├── components/    # 通用组件
+│   │   ├── api/          # API 客户端
+│   │   └── ...
+│   └── package.json
+├── data/                   # 数据目录
+│   ├── db/                # SQLite 数据库
+│   ├── media/             # 媒体文件
+│   ├── logs/              # 日志文件
+│   └── browser/           # 浏览器数据
+├── deploy/                 # 部署配置
+│   ├── nginx.conf         # Nginx 配置
+│   └── docker-compose.yml
+├── run.sh                  # 一键启动脚本
+└── README.md
+```
+
+### 配置说明
+
+主要配置文件：`backend/config.py`
+
+```python
+class Settings:
+    # 数据库
+    DB_PATH = DATA_DIR / "db" / "douyin.db"
+
+    # 服务器端口
+    API_PORT = 18000      # REST API 端口
+    MCP_PORT = 18001      # MCP SSE 端口
+
+    # 浏览器配置
+    HEADLESS = False      # 是否无头模式
+
+    # 请求控制
+    MIN_DELAY = 3.0       # 最小请求延迟
+    MAX_DELAY = 6.0       # 最大请求延迟
+
+    # 并发控制
+    MAX_CONCURRENT_TASKS = 3          # 最大并发任务数
+    MAX_CONCURRENT_DOWNLOADS = 3      # 并行下载数
+    MAX_CONCURRENT_COMMENTS = 2       # 并行评论采集数
+```
+
+### 反检测措施
+
+系统实现了 19 项反检测措施：
+
+1. **WebDriver 属性隐藏**
+2. **Chrome 运行时模拟**
+3. **Canvas/WebGL/AudioContext 指纹噪声**
+4. **UA Client Hints 伪装**
+5. **随机请求延迟**
+6. **导航前后随机等待**
+7. **每 3-5 页自动长暂停**
+8. **鼠标微动作模拟**
+9. **document.hasFocus/visibilityState 伪装**
+10. **验证码自动检测与手动处理**
+11. ...等
+
+### 数据模型
+
+```mermaid
+erDiagram
+    User ||--o{ Work : has
+    Work ||--o{ Comment : has
+    Work ||--o{ MediaFile : has
+    User {
+        string uid PK
+        string sec_user_id
+        string nickname
+        string douyin_id
+        int follower_count
+        int following_count
+        int aweme_count
+    }
+    Work {
+        string aweme_id PK
+        string uid FK
+        string sec_user_id
+        string type
+        string title
+        int digg_count
+        int comment_count
+        datetime publish_time
+    }
+    Comment {
+        string comment_id PK
+        string aweme_id FK
+        string user_id
+        string content
+        int digg_count
+        string reply_to
+    }
+    MediaFile {
+        int id PK
+        string aweme_id FK
+        string media_type
+        string url
+        string local_path
+        string download_status
+    }
+```
+
+---
+
+## 🔧 常见问题
+
+### Q: 出现验证码怎么办？
+
+**A:** 系统会自动检测验证码并暂停采集。需要在弹出的浏览器窗口中手动完成验证，之后采集会自动继续。Dashboard 页面会显示当前验证码状态。
+
+### Q: 为什么默认不是无头模式？
+
+**A:** 默认 `HEADLESS = False` 是为了：
+- 方便手动处理验证码
+- 方便扫码登录
+- 开发调试时可观察采集过程
+
+生产环境可改为 `HEADLESS = True`。
+
+### Q: 采集速度慢？
+
+**A:** 为避免触发反爬，每次请求间有 3-6 秒延迟。可在 `backend/config.py` 中调整 `MIN_DELAY` 和 `MAX_DELAY`，但过快会增加被封风险。
+
+### Q: 数据存储在哪里？
+
+**A:** 所有数据存储在 `data/` 目录：
+```
 data/
-├── db/douyin.db          # SQLite 数据库（用户/作品/评论/任务等）
-├── media/                # 下载的媒体文件
+├── db/douyin.db          # SQLite 数据库
+├── media/                # 媒体文件
 │   └── {sec_user_id}/
 │       ├── videos/       # 视频文件
 │       └── notes/        # 图文图片
-├── logs/app.jsonl        # 持久化日志文件（JSON Lines 格式）
-└── browser/              # Playwright 浏览器数据（Cookie 等）
+├── logs/app.jsonl        # 持久化日志
+└── browser/              # 浏览器数据
 ```
 
-### 如何备份数据？
+### Q: 如何备份数据？
 
-备份 `data/` 目录即可，包含数据库和所有下载的媒体文件。
+**A:** 备份 `data/` 目录即可，包含数据库和所有媒体文件。
 
 ---
 
-## 技术架构
+## 🤝 贡献指南
 
-```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Vue3 前端   │────▶│  FastAPI 后端  │────▶│   Playwright  │
-│  :5173      │     │  :8000       │     │   浏览器引擎   │
-└─────────────┘     └──────┬───────┘     └──────┬───────┘
-                           │                     │
-                    ┌──────▼───────┐     ┌──────▼───────┐
-                    │   SQLite DB   │     │   抖音 Web    │
-                    │  aiosqlite   │     │  API 拦截     │
-                    └──────────────┘     └──────────────┘
-```
+欢迎贡献代码、报告问题或提出建议！
 
-**技术栈：**
-- 前端：Vue 3 + TypeScript + Element Plus + Vite
-- 后端：FastAPI + aiosqlite + Pydantic
-- 采集：Playwright + 自定义反检测（19 项指纹伪装）
-- 数据拦截：`page.route()` 拦截抖音 API 响应（无需逆向签名算法）
-- 语音识别：faster-whisper（base 模型，CPU int8）+ ffmpeg
-- 任务队列：asyncio + SQLite（轻量，无需 Redis）
-- MCP Server：SSE 协议，供 AI 客户端调用
+1. Fork 项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
 
-**反检测措施：**
-- WebDriver 属性隐藏
-- Chrome 运行时模拟
-- Canvas/WebGL/AudioContext 指纹噪声
-- UA Client Hints 伪装
-- 随机请求延迟 + 导航前后随机等待
-- 每 3~5 页自动长暂停（5~10 秒）
-- 鼠标微动作模拟、document.hasFocus/visibilityState 伪装
-- 验证码自动检测 + 手动处理
+---
+
+## 📄 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+
+---
+
+## 🙏 致谢
+
+- [Playwright](https://playwright.dev/) - 浏览器自动化框架
+- [FastAPI](https://fastapi.tiangolo.com/) - 现代 Web 框架
+- [Vue.js](https://vuejs.org/) - 渐进式 JavaScript 框架
+- [Element Plus](https://element-plus.org/) - Vue 3 UI 组件库
+- [faster-whisper](https://github.com/guillaumekln/faster-whisper) - 高效语音识别
+
+---
+
+<div align="center">
+
+**⭐ 如果这个项目对你有帮助，请给一个 Star！⭐**
+
+Made with ❤️ by the community
+
+</div>
