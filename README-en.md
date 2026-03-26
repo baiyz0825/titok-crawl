@@ -727,6 +727,60 @@ Thank you to the authors of the above projects for their contributions to the op
 
 ---
 
+## ⚠️ Disclaimer
+
+**This project is for learning and research purposes only. Commercial or illegal use is strictly prohibited!**
+
+### 📌 Important Notice
+
+1. **Educational Purpose**
+   - This project is solely for learning browser automation, data collection, and related technologies
+   - Must not be used for any commercial purposes or profit-making activities
+   - Must not be used for large-scale data scraping or malicious requests
+
+2. **Legal Compliance**
+   - Users must comply with relevant laws and regulations, including cybersecurity laws
+   - Must not collect, store, or distribute any illegal or non-compliant content
+   - Must not infringe upon others' privacy, intellectual property, or other legal rights
+   - Must not cause any form of damage or burden to target websites
+
+3. **Risk Assumption**
+   - Users assume all consequences resulting from the use of this project
+   - The project authors bear no legal liability for any damages arising from the use of this project
+   - Users must independently assess and assume all risks
+
+4. **Usage Restrictions**
+   - Must not bypass website anti-scraping mechanisms for malicious collection
+   - Must not leak, sell, or illegally use collected data
+   - Must comply with target websites' robots.txt and terms of service
+   - Recommend setting reasonable request rates to avoid server overload
+
+5. **Data Security**
+   - Collected personal data must be properly secured and not leaked
+   - Must comply with relevant data protection regulations
+   - Must not use data for any purpose that may harm national security or social stability
+
+### 🚫 Prohibited Activities
+
+Strictly prohibited from using this project for:
+- ❌ Commercial data collection or sales
+- ❌ Privacy infringement
+- ❌ Distribution of illegal information
+- ❌ Malicious attacks or destruction
+- ❌ Any illegal activities
+
+### ✅ Proper Usage
+
+Recommended use of this project for:
+- ✅ Learning browser automation technology
+- ✅ Researching web data collection principles
+- ✅ Understanding anti-scraping mechanisms
+- ✅ Learning frontend and backend development architecture
+
+**By using this project, you indicate that you have read, understood, and agree to comply with this disclaimer. If you do not agree, please do not use this project.**
+
+---
+
 <div align="center">
 
 **⭐ If this project helps you, please give it a Star! ⭐**
