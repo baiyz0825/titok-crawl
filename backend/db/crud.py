@@ -593,16 +593,18 @@ async def get_next_pending_task() -> Task | None:
     can claim a task at a time.
     """
     # Use atomic UPDATE with RETURNING to prevent race conditions
+    # Set status to 'running' immediately to prevent other workers from picking it up
     cursor = await db.conn.execute(
         """UPDATE tasks
-           SET status = 'queued'
+           SET status = 'running', started_at = ?
            WHERE id = (
                SELECT id FROM tasks
                WHERE status = 'pending'
                ORDER BY priority DESC, created_at ASC
                LIMIT 1
            )
-           RETURNING *"""
+           RETURNING *""",
+        (datetime.now().isoformat(),)
     )
     row = await cursor.fetchone()
     if row is None:

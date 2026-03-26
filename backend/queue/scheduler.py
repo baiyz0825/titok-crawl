@@ -165,9 +165,7 @@ class TaskScheduler:
         async with self._task_semaphore:
             self._current_task_id = task.id
 
-            # Mark as running
-            now = datetime.now().isoformat()
-            await crud.update_task(task.id, status="running", started_at=now)
+            # Task is already marked as 'running' by get_next_pending_task()
             logger.info(f"Executing task #{task.id}: {task.task_type} -> {task.target}")
 
             try:
