@@ -3,8 +3,17 @@
     <!-- 桌面端用户面板 -->
     <aside class="user-panel" :class="{ open: panelOpen }">
       <div class="panel-header">
-        <h3>选择用户</h3>
+        <h3>{{ feedMode === 'global' ? '全局 Feed' : '选择用户' }}</h3>
         <div class="panel-header-actions">
+          <button
+            class="mode-btn"
+            :class="{ active: feedMode === 'global' }"
+            @click="toggleFeedMode"
+            :title="feedMode === 'global' ? '切换到单用户模式' : '切换到全局模式'"
+          >
+            <svg v-if="feedMode === 'global'" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12" stroke="#1a1a1a" stroke-width="2"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" fill="none" stroke="#1a1a1a" stroke-width="2"/></svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </button>
           <button
             class="auto-play-btn"
             :class="{ active: autoPlayEnabled }"
@@ -80,6 +89,15 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         <span>返回</span>
       </button>
+      <!-- 模式切换按钮 -->
+      <button
+        class="mobile-mode-btn"
+        :class="{ active: feedMode === 'global' }"
+        @click="toggleFeedMode"
+      >
+        <svg v-if="feedMode === 'global'" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12" stroke="#1a1a1a" stroke-width="2"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" fill="none" stroke="#1a1a1a" stroke-width="2"/></svg>
+        <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </button>
       <!-- 自动播放按钮 -->
       <button
         class="mobile-auto-play-btn"
@@ -102,7 +120,7 @@
 
     <!-- 视频 Feed -->
     <div class="feed-container" ref="feedRef">
-      <div v-if="!selectedUser" class="feed-empty">
+      <div v-if="feedMode === 'user' && !selectedUser" class="feed-empty">
         <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
           <polygon points="5 3 19 12 5 21 5 3"/>
         </svg>
@@ -127,7 +145,7 @@
             :src="work._videoUrl"
             class="feed-media"
             loop
-            muted
+            :muted="isMuted"
             playsinline
             preload="auto"
             :poster="work.cover_url"
@@ -144,6 +162,11 @@
 
           <!-- 右侧互动栏 -->
           <div class="feed-actions">
+            <div class="action-item" @click.stop="toggleMute">
+              <svg v-if="isMuted" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              <span>{{ isMuted ? '静音' : '声音' }}</span>
+            </div>
             <div class="action-item" @click.stop="toggleFavorite(work)">
               <svg v-if="favoriteStatus[work.aweme_id]" viewBox="0 0 24 24" width="28" height="28" fill="#ef4444" stroke="#ef4444" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
               <svg v-else viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
@@ -161,7 +184,23 @@
 
           <!-- 底部信息 -->
           <div class="feed-info">
-            <div class="feed-author">@{{ selectedUser?.nickname || '' }}</div>
+            <!-- 全局模式显示作者信息（可点击） -->
+            <div
+              v-if="feedMode === 'global' && work._author"
+              class="feed-author-row clickable"
+              @click.stop="selectAuthor(work._author)"
+            >
+              <img
+                v-if="work._author.avatar_url"
+                :src="work._author.avatar_url"
+                class="feed-author-avatar"
+                @error="(e: any) => e.target.style.display = 'none'"
+              />
+              <div v-else class="feed-author-avatar-placeholder">{{ (work._author.nickname || '?')[0] }}</div>
+              <span class="feed-author">@{{ work._author.nickname || '未知用户' }}</span>
+            </div>
+            <!-- 单用户模式显示作者 -->
+            <div v-else class="feed-author">@{{ selectedUser?.nickname || '' }}</div>
             <div class="feed-title">{{ work.title || '无标题' }}</div>
           </div>
         </div>
@@ -249,6 +288,7 @@ import client from '../api/client'
 const router = useRouter()
 
 // --- 状态 ---
+const feedMode = ref<'user' | 'global'>('user')  // 'user' 单用户模式, 'global' 全局模式
 const loadingUsers = ref(false)
 const loadingWorks = ref(false)
 const users = ref<any[]>([])
@@ -272,6 +312,9 @@ const favoriteStatus = ref<Record<string, boolean>>({})
 
 // 自动播放控制
 const autoPlayEnabled = ref(true)
+
+// 音量控制
+const isMuted = ref(true)
 
 const feedRef = ref<HTMLDivElement | null>(null)
 const sentinelRef = ref<HTMLDivElement | null>(null)
@@ -314,6 +357,11 @@ async function selectUser(user: any) {
   hasMore.value = true
   selectedUserDetail.value = null
 
+  // 如果当前是全局模式，切换到单用户模式
+  if (feedMode.value === 'global') {
+    feedMode.value = 'user'
+  }
+
   // 获取用户详细统计
   const userKey = user.uid || user.sec_user_id
   try {
@@ -325,32 +373,84 @@ async function selectUser(user: any) {
   loadWorks()
 }
 
+// --- 模式切换 ---
+function toggleFeedMode() {
+  const newMode = feedMode.value === 'user' ? 'global' : 'user'
+  feedMode.value = newMode
+
+  // 清空当前状态
+  works.value = []
+  page.value = 1
+  hasMore.value = true
+
+  // 如果切换到单用户模式，清空选中用户
+  if (newMode === 'user') {
+    selectedUser.value = null
+    selectedUserDetail.value = null
+  }
+
+  // 重新加载视频
+  loadWorks()
+}
+
 // --- 作品列表 ---
 async function loadWorks() {
-  if (!selectedUser.value || loadingWorks.value || !hasMore.value) return
+  // 单用户模式需要选择用户，全局模式不需要
+  if (feedMode.value === 'user' && !selectedUser.value) return
+  if (loadingWorks.value || !hasMore.value) return
+
   loadingWorks.value = true
   try {
     const params: any = {
       page: page.value,
       size: 20,
     }
-    // Prefer uid over sec_user_id for API calls
-    if (selectedUser.value.uid) {
-      params.uid = selectedUser.value.uid
-    } else if (selectedUser.value.sec_user_id) {
-      params.sec_user_id = selectedUser.value.sec_user_id
+
+    if (feedMode.value === 'user') {
+      // 单用户模式：添加用户参数
+      if (selectedUser.value.uid) {
+        params.uid = selectedUser.value.uid
+      } else if (selectedUser.value.sec_user_id) {
+        params.sec_user_id = selectedUser.value.sec_user_id
+      }
     }
+    // 全局模式：不添加用户参数，加载所有用户的视频
+
     const res: any = await client.get('/works', { params })
-    const items = res.items || res || []
+    let items = res.items || res || []
+
     if (items.length === 0) {
       hasMore.value = false
     } else {
+      // 全局模式：按发布时间排序（最新的在前）
+      if (feedMode.value === 'global') {
+        items = items.sort((a: any, b: any) => {
+          const timeA = new Date(a.create_time || 0).getTime()
+          const timeB = new Date(b.create_time || 0).getTime()
+          return timeB - timeA
+        })
+      }
+
       // 添加内部状态字段
       items.forEach((w: any) => {
         w._videoUrl = null
         w._loading = false
         w._noVideo = false
         w._loaded = false
+
+        // 全局模式：从users列表中查找作者信息
+        if (feedMode.value === 'global') {
+          const author = users.value.find(
+            (u: any) => u.uid === w.uid || u.sec_user_id === w.sec_user_id
+          )
+          w._author = author ? {
+            uid: w.uid,
+            sec_user_id: w.sec_user_id,
+            nickname: author.nickname,
+            avatar_url: author.avatar_url
+          } : null
+        }
+
         // 检查收藏状态
         checkFavoriteStatus(w.aweme_id)
       })
@@ -366,6 +466,7 @@ async function loadWorks() {
 // --- IntersectionObserver 视频懒加载 + 自动播放 ---
 let cardObserver: IntersectionObserver | null = null
 let sentinelObserver: IntersectionObserver | null = null
+let currentVideoIndex = ref<number | null>(null)
 
 function observeCards() {
   if (!cardObserver) {
@@ -378,11 +479,15 @@ function observeCards() {
           if (!work) return
 
           if (entry.isIntersecting) {
+            // 更新当前视频索引
+            currentVideoIndex.value = idx
+
             // 懒加载视频 URL
             if (!work._loaded && !work._loading) {
               loadVideoUrl(work)
             }
-            // 注意：不在这里尝试播放，            // 自动播放将在 @loadeddata 事件中处理
+            // 注意：不在这里尝试播放,
+            // 自动播放将在 @loadeddata 事件中处理
           } else {
             // 暂停
             const video = el.querySelector('video')
@@ -470,6 +575,21 @@ function closeComments() {
   commentTree.value = []
 }
 
+// --- 全局模式下点击作者切换到单用户模式 ---
+function selectAuthor(author: any) {
+  // 从用户列表中查找对应的用户
+  const user = users.value.find(
+    (u: any) => u.uid === author.uid || u.sec_user_id === author.sec_user_id
+  )
+
+  if (user) {
+    // 切换到单用户模式
+    feedMode.value = 'user'
+    // 选中该用户
+    selectUser(user)
+  }
+}
+
 // --- 收藏功能 ---
 async function checkFavoriteStatus(aweme_id: string) {
   try {
@@ -507,6 +627,22 @@ function togglePlay(e: Event) {
     video.play().catch(() => {})
   } else {
     video.pause()
+  }
+}
+
+// --- 音量控制 ---
+function toggleMute() {
+  isMuted.value = !isMuted.value
+
+  // 立即应用音量变化到当前播放的视频
+  if (currentVideoIndex.value !== null) {
+    const card = feedRef.value?.querySelector(`[data-index="${currentVideoIndex.value}"]`)
+    if (card) {
+      const video = card.querySelector('video') as HTMLVideoElement
+      if (video) {
+        video.muted = isMuted.value
+      }
+    }
   }
 }
 
@@ -647,6 +783,29 @@ watch(sentinelRef, (el) => {
   background: rgba(16, 185, 129, 0.2);
   border-color: #10b981;
   color: #10b981;
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mode-btn:hover {
+  background: #252525;
+  color: #888;
+}
+.mode-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+  color: #3b82f6;
 }
 .panel-close {
   display: none;
@@ -857,6 +1016,26 @@ watch(sentinelRef, (el) => {
   color: #10b981;
 }
 
+.mobile-mode-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid #333;
+  border-radius: 50%;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mobile-mode-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
 /* ===== Feed ===== */
 .feed-container {
   flex: 1;
@@ -972,6 +1151,42 @@ watch(sentinelRef, (el) => {
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 6px;
+}
+.feed-author-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.feed-author-row.clickable {
+  cursor: pointer;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border-radius: 20px;
+  transition: background 0.2s;
+}
+.feed-author-row.clickable:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.feed-author-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+}
+.feed-author-avatar-placeholder {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
 }
 .feed-title {
   font-size: 13px;
@@ -1205,6 +1420,10 @@ watch(sentinelRef, (el) => {
   }
 
   .mobile-auto-play-btn {
+    display: flex;
+  }
+
+  .mobile-mode-btn {
     display: flex;
   }
 
