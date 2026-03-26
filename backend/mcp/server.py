@@ -13,17 +13,33 @@ mcp_server = FastMCP("douyin-scraper", host="0.0.0.0", port=settings.MCP_PORT)
 
 
 @mcp_server.tool()
-async def scrape_user(sec_user_id: str) -> str:
-    """Scrape a Douyin user's profile data. Creates a background task.
+async def scrape_user(identifier: str, sync_type: str = "all") -> str:
+    """Scrape a Douyin user's data. Creates a background task.
 
     Args:
-        sec_user_id: The user's sec_user_id from their profile URL
+        identifier: User identifier (sec_user_id, douyin_id, or nickname)
+        sync_type: Type of data to scrape - "all", "profile", or "works" (default: "all")
     """
+    identifier = identifier.strip()
+
+    # Determine if it looks like a sec_user_id (starts with MS4 or is very long)
+    if identifier.startswith("MS4") or len(identifier) > 30:
+        sec_user_id = identifier
+    else:
+        # Try to find locally first
+        local_users = await crud.search_users_local(identifier, limit=1)
+        if local_users:
+            sec_user_id = local_users[0].sec_user_id
+        else:
+            return json.dumps({"error": f"User '{identifier}' not found in local database. Please provide full sec_user_id."})
+
+    type_map = {"all": "user_all", "profile": "user_profile", "works": "user_works"}
+    task_type = type_map.get(sync_type, "user_all")
     task = await crud.create_task(
-        task_type="user_profile",
+        task_type=task_type,
         params={"sec_user_id": sec_user_id},
     )
-    return json.dumps({"task_id": task.id, "status": "pending", "message": f"Task created to scrape user {sec_user_id}"})
+    return json.dumps({"task_id": task.id, "status": "pending", "task_type": task_type, "sec_user_id": sec_user_id})
 
 
 @mcp_server.tool()
@@ -84,31 +100,90 @@ async def lookup_user(keyword: str) -> str:
 
 
 @mcp_server.tool()
-async def get_user_info(sec_user_id: str) -> str:
+async def get_user_info(user_id: str) -> str:
     """Get stored user profile information from database.
 
     Args:
-        sec_user_id: The user's sec_user_id
+        user_id: User's uid or sec_user_id (uid preferred)
     """
-    user = await crud.get_user(sec_user_id)
+    # Try uid first (more reliable), then sec_user_id
+    user = await crud.get_user_by_uid(user_id)
+    if user is None:
+        user = await crud.get_user(user_id)
     if not user:
         return json.dumps({"error": "User not found in database"})
-    return json.dumps(user.model_dump(), ensure_ascii=False, default=str)
+
+    # Get scrape status
+    works_count = await crud.count_works(sec_user_id=user.sec_user_id, uid=user.uid)
+    comments_count = await crud.count_user_comments(sec_user_id=user.sec_user_id, uid=user.uid)
+    media_count = await crud.count_user_media(sec_user_id=user.sec_user_id, uid=user.uid)
+
+    return json.dumps({
+        **user.model_dump(),
+        "scrape_status": {
+            "works_count": works_count,
+            "comments_count": comments_count,
+            "media_count": media_count,
+            "profile_scraped": True,
+            "profile_updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        }
+    }, ensure_ascii=False, default=str)
 
 
 @mcp_server.tool()
-async def get_works(sec_user_id: str | None = None, work_type: str | None = None, page: int = 1, size: int = 20) -> str:
+async def get_works(
+    sec_user_id: str | None = None,
+    uid: str | None = None,
+    type: str | None = None,
+    page: int = 1,
+    size: int = 20,
+    sort_by: str = "publish_time",
+    sort_order: str = "DESC",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    has_comments: bool | None = None,
+    has_media: bool | None = None,
+    has_transcript: bool | None = None
+) -> str:
     """Get stored works from database with optional filters.
 
     Args:
-        sec_user_id: Filter by user (optional)
-        work_type: Filter by type: 'video' or 'note' (optional)
+        sec_user_id: Filter by user's sec_user_id (fallback, optional)
+        uid: Filter by user's uid (preferred, optional)
+        type: Filter by work type: 'video' or 'note' (optional)
         page: Page number (default 1)
         size: Page size (default 20)
+        sort_by: Sort field (default "publish_time")
+        sort_order: Sort order "ASC" or "DESC" (default "DESC")
+        start_date: Filter by start date (optional)
+        end_date: Filter by end date (optional)
+        has_comments: Filter works with comments (optional)
+        has_media: Filter works with media files (optional)
+        has_transcript: Filter works with transcript (optional)
     """
-    works = await crud.get_works(sec_user_id=sec_user_id, work_type=work_type, page=page, size=size)
-    total = await crud.count_works(sec_user_id=sec_user_id, work_type=work_type)
-    return json.dumps({"items": [w.model_dump() for w in works], "total": total}, ensure_ascii=False, default=str)
+    filter_kwargs = dict(
+        sec_user_id=sec_user_id,
+        uid=uid,
+        work_type=type,
+        start_date=start_date,
+        end_date=end_date,
+        has_comments=has_comments,
+        has_media=has_media,
+        has_transcript=has_transcript,
+    )
+    works = await crud.get_works(
+        **filter_kwargs,
+        page=page,
+        size=size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    total = await crud.count_works(**filter_kwargs)
+    return json.dumps(
+        {"items": [w.model_dump() for w in works], "total": total, "page": page, "size": size},
+        ensure_ascii=False,
+        default=str
+    )
 
 
 @mcp_server.tool()
