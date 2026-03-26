@@ -32,3 +32,26 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Test and debug files
+test_*.py
+debug_*.py
+debug_*.log
+analyze_*.py
+manual_test.py
+monitor_*.py
+*_test.py
+*_debug.py
+
+# Temporary test data
+*.jpg
+*.png
+!docs/screenshots/*.png
+douyin_*.json
+douyin_*.txt
+*_output.log
+*_snapshot.txt
+
+# Temporary scripts
+Detect_*.sh
+Dockerignore
