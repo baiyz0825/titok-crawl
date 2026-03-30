@@ -1,13 +1,11 @@
 # ============================================
 # 单容器化部署配置
-# 所有功能集成在一个容器中，# ============================================
+# 所有功能集成在一个容器中
+# ============================================
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: douyin-scraper:latest
-    container_name: douyin-scraper
+    image: ghcr.io/baiyz0825/titok-crawl:latest
+    container_name: titok-crawl
     restart: unless-stopped
     ports:
       - "80:80"      # HTTP (nginx)

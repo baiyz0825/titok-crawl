@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     nginx \
+    supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -37,7 +38,29 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright chromium
-RUN playwright install chromium --with-deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-unifont \
+    fonts-noto-color-emoji \
+    fonts-noto-cjk \
+    fonts-wqy-zenhei \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && playwright install chromium
 
 # Copy backend code
 COPY backend/ ./backend/
@@ -51,7 +74,9 @@ RUN mkdir -p /app/data/db /app/data/media
 # Copy nginx config and entrypoint
 COPY deploy/nginx.conf /etc/nginx/sites-available/default
 COPY deploy/entrypoint.sh /app/entrypoint.sh
+COPY deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN chmod +x /app/entrypoint.sh && \
+    mkdir -p /var/log/supervisor && \
     ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 EXPOSE 80
