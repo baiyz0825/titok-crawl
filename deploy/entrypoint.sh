@@ -17,11 +17,27 @@ python -m uvicorn backend.main:app \
     --timeout-keep-alive 120 \
     --log-level info &
 
+# 启动 MCP 服务器 (后台运行)
+echo "Starting MCP server..."
+python -m mcp run backend/mcp_server.py \
+    --transport sse \
+    --port 8001 &
+
 # 等待后端启动
 echo "Waiting for backend to be ready..."
 for i in $(seq 1 30); do
     if curl -sf http://localhost:8000/api/sessions/status > /dev/null 2>&1; then
         echo "Backend is ready!"
+        break
+    fi
+    sleep 1
+done
+
+# 等待 MCP 服务器启动
+echo "Waiting for MCP server to be ready..."
+for i in $(seq 1 10); do
+    if curl -sf http://localhost:8001/ > /dev/null 2>&1; then
+        echo "MCP server is ready!"
         break
     fi
     sleep 1

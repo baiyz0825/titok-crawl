@@ -14,6 +14,11 @@ RUN npm run build
 # ============================================
 FROM python:3.13-slim
 
+# Container metadata
+LABEL org.opencontainers.image.source=https://github.com/baiyz0825/titok-crawl
+LABEL org.opencontainers.image.description="Douyin/TikTok video scraper with web UI and MCP support"
+LABEL org.opencontainers.image.licenses=MIT
+
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITE_BYTECODE=1
 ENV PYTHONFAULTHANDLER=ignore
@@ -46,11 +51,10 @@ RUN mkdir -p /app/data/db /app/data/media
 # Copy nginx config and entrypoint
 COPY deploy/nginx.conf /etc/nginx/sites-available/default
 COPY deploy/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && \
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
- ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
-
-EXPOSE 80 8000 8001
+EXPOSE 80
 VOLUME ["/app/data"]
 ENV HEADLESS=true
 CMD ["/app/entrypoint.sh"]

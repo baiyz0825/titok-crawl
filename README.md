@@ -331,21 +331,63 @@ cd frontend && npm run dev
 
 ### Docker 部署
 
+#### 方式1：使用预构建镜像（推荐）
+
+从 GitHub Container Registry 拉取镜像：
+
 ```bash
-# 一键启动所有服务
-docker-compose up -d
+# 拉取最新镜像
+docker pull ghcr.io/baiyz0825/titok-crawl:latest
+
+# 使用 docker-compose 启动
+docker compose up -d
+```
+
+**docker-compose.yml 示例：**
+
+```yaml
+services:
+  app:
+    image: ghcr.io/baiyz0825/titok-crawl:latest
+    container_name: douyin-scraper
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - HEADLESS=true
+```
+
+#### 方式2：本地构建
+
+```bash
+# 一键启动所有服务（本地构建）
+docker compose up -d
+
+# 或手动构建
+./build.sh
 
 # 查看日志
-docker-compose logs -f
+docker compose logs -f
 
 # 停止服务
-docker-compose down
+docker compose down
 ```
+
+#### 镜像版本
+
+| 标签 | 说明 |
+|------|------|
+| `latest` | 最新稳定版（main 分支） |
+| `main` | main 分支最新构建 |
+| `v1.0.0` | 特定版本号 |
 
 **Docker 部署特点:**
 - Nginx 统一入口（单端口 80）
 - 自动构建前端静态文件
 - 数据持久化到 `./data` 目录
+- 支持多架构（linux/amd64, linux/arm64）
 
 | 路径 | 服务 |
 |------|------|
