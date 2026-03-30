@@ -52,10 +52,11 @@ docs
 !CLAUDE.md
 
 # Deployment scripts (not needed in image)
-deploy/*.sh
 build.sh
 slim-build.sh
 install-playwright.sh
+deploy/*.conf
+!deploy/entrypoint.sh
 
 *.txt
 snapshot*.txt
